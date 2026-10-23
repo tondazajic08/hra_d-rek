@@ -57,6 +57,9 @@ function foosFigures(rod, p) {
 
 // --- průběh ---
 const FOOS_QUIT_BTN = { x: 12, y: 14, w: 56, h: 44 };   // vlevo nahoře (vpravo je zvuk)
+// menu: obtížnosti, dva hráči, online soupeř (jen s databází, 35_online_hry.js) a Odejít (null)
+const foosMenuItems = () => [...FOOS.LEVELS, ...(mpReady() ? [DUEL.ROW] : []), null];
+const foosMenuRows = () => foosMenuItems().map((_, i) => ({ x: 210, y: 174 + i * 54, w: 380, h: 46 }));
 function openFoosball() {
   state.foos = { phase: 'menu', menuSel: 0, keys: [], level: null, fingers: {} };
   input.events.length = 0;
@@ -74,6 +77,7 @@ function foosNewGame(level) {
   f.vel = { red: 0, blue: 0 };          // rychlost posunu (pro „švih“ do míčku)
   f.kickT = { red: 0, blue: 0 };
   f.kickCd = { red: 0, blue: 0 };
+  f.kickN = { red: 0, blue: 0 };        // kolikrát kdo kopl (online soupeř podle toho ukáže kop)
   f.auto = { red: false, blue: false }; // samočinný kop (ovládání prstem)
   f.aiErr = 0; f.aiErrT = 0; f.aiSeenY = FOOS.FIELD.y + FOOS.FIELD.h / 2;
   f.confirmQuit = false;
@@ -92,6 +96,8 @@ function foosServe(f, toward) {
 
 function foosLeave() {
   const f = state.foos;
+  if (f && f.online) duelQuit(f);   // online zápas skončí i u soupeře (35_online_hry.js)
+  if (duel.ask) duelCancelAsk();
   state.foos = null;
   setMusicTrack(audio.prevTrack || 'main');   // zpátky, co hrálo předtím (pokračuje, kde skončilo)
   setScreen('playing');
@@ -101,6 +107,10 @@ function foosLeave() {
 
 function foosGoal(f, team) {
   f.score[team]++;
+  if (f.online) foosOnlineGoal(f, team);   // pošle gól soupeři (35_online_hry.js)
+  foosShowGoal(f, team);
+}
+function foosShowGoal(f, team) {
   playSound([[523, 0, 0.08], [659, 0.09, 0.08], [784, 0.18, 0.16]]);
   if (f.score[team] >= FOOS.WIN) { foosFinish(f, team); return; }
   f.phase = 'goal';
@@ -115,6 +125,9 @@ function foosFinish(f, winner) {
   if (f.level.id === 'two') {
     f.msg = `${FOOS.TEAMS[winner].name} vyhráli ${s}`;
     playSound(CONFIG.SOUND_COMPLETE);
+  } else if (f.online) {
+    f.msg = winner === 'red' ? `Vyhrál jsi ${s} proti ${duelOppName()}!` : `Prohrál jsi ${s}`;
+    playSound(winner === 'red' ? CONFIG.SOUND_COMPLETE : CONFIG.SOUND_MISS);
   } else if (winner === 'red') {
     f.reward = f.level.reward;
     state.money += f.reward;
@@ -174,12 +187,18 @@ function foosAi(f, dt) {
       const ahead = (ball.x - r.x) * FOOS.TEAMS.blue.dir;   // jak daleko je míček před panáčkem
       if (ahead < -6 || ahead > 26) continue;
       if (foosFigures(r, f.p.blue).some((fy) => Math.abs(ball.y - fy) < 16)) {
-        if (Math.random() < L.kick) { f.kickT.blue = FOOS.KICK_TIME; f.kickCd.blue = FOOS.KICK_COOLDOWN; }
+        if (Math.random() < L.kick) foosKick(f, 'blue');
         else f.kickCd.blue = 0.25;   // tentokrát nekopl
         break;
       }
     }
   }
+}
+
+function foosKick(f, team) {
+  f.kickT[team] = FOOS.KICK_TIME;
+  f.kickCd[team] = FOOS.KICK_COOLDOWN;
+  f.kickN[team]++;
 }
 
 // Míček narazí do panáčka (obdélník kolem středu fx, fy); při kopu letí k soupeřově brance
@@ -204,7 +223,7 @@ function foosHitFigure(f, team, fx, fy) {
   if (inFront && (kicking || f.auto[team])) {
     b.vx = T.dir * FOOS.KICK_SPEED * (0.9 + Math.random() * 0.2);
     b.vy = (b.y - fy) * 12 + b.vy * 0.3 + (Math.random() - 0.5) * 260;   // střela trochu do strany
-    if (!kicking) { f.kickT[team] = FOOS.KICK_TIME; f.kickCd[team] = FOOS.KICK_COOLDOWN; }
+    if (!kicking) foosKick(f, team);
     playSound([[180, 0, 0.04]]);
   } else if (Math.abs(b.vx) < 40) {
     b.vx += T.dir * 40;                   // ať se míček u panáčka nezasekne
@@ -213,6 +232,7 @@ function foosHitFigure(f, team, fx, fy) {
 
 function foosPhysics(f, dt) {
   const F = FOOS.FIELD, b = f.ball, r = FOOS.BALL_R;
+  const boss = !f.online || f.own === 'me';   // online o gólu rozhoduje jen ten, kdo míček řídí (35_online_hry.js)
   const steps = 6, h = dt / steps;
   for (let s = 0; s < steps && f.phase === 'play'; s++) {
     b.x += b.vx * h;
@@ -223,11 +243,11 @@ function foosPhysics(f, dt) {
     // levá a pravá strana: v brance gól, jinak odraz
     const inGoal = Math.abs(b.y - (F.y + F.h / 2)) < FOOS.GOAL / 2 - r / 2;
     if (b.x < F.x + r) {
-      if (inGoal && b.x < F.x - r) { foosGoal(f, 'blue'); return; }
+      if (inGoal && b.x < F.x - r) { if (boss) foosGoal(f, 'blue'); else { b.vx = 0; b.vy = 0; } return; }
       if (!inGoal) { b.x = F.x + r; b.vx = Math.abs(b.vx) * 0.85; }
     }
     if (b.x > F.x + F.w - r) {
-      if (inGoal && b.x > F.x + F.w + r) { foosGoal(f, 'red'); return; }
+      if (inGoal && b.x > F.x + F.w + r) { if (boss) foosGoal(f, 'red'); else { b.vx = 0; b.vy = 0; } return; }
       if (!inGoal) { b.x = F.x + F.w - r; b.vx = -Math.abs(b.vx) * 0.85; }
     }
     for (const rod of FOOS_RODS) {
@@ -242,7 +262,7 @@ function foosPhysics(f, dt) {
   if (sp > FOOS.MAX_SPEED) { b.vx *= FOOS.MAX_SPEED / sp; b.vy *= FOOS.MAX_SPEED / sp; }
   // zaseknutý míček: po chvíli ho „někdo postrčí“
   f.stillT = sp < 30 ? f.stillT + dt : 0;
-  if (f.stillT > 1.5) {
+  if (f.stillT > 1.5 && boss) {
     const cx = F.x + F.w / 2, cy = F.y + F.h / 2;
     b.vx = (cx - b.x > 0 ? 1 : -1) * (120 + Math.random() * 80);
     b.vy = (cy - b.y) * 0.8 + (Math.random() - 0.5) * 160;
@@ -256,22 +276,26 @@ function updateFoosball(dt) {
   const keys = f.keys.splice(0);
   const has = (list, k) => KEYMAP[list].includes(k);
 
+  if (f.phase === 'pick' || f.phase === 'wait') { duelPickUpdate(f, 'foos', events, keys); return; }   // online výzva (35_online_hry.js)
   if (f.phase === 'menu') {
-    const n = FOOS.LEVELS.length + 1;
+    const items = foosMenuItems(), n = items.length;
     for (const k of keys) {
       if (has('up', k)) f.menuSel = (f.menuSel + n - 1) % n;
       if (has('down', k)) f.menuSel = (f.menuSel + 1) % n;
       if (k === 'Escape') { foosLeave(); return; }
     }
     for (const ev of events) {
-      const i = ev.type === 'action' ? f.menuSel : chessHit(chessMenuRows(), ev);
+      const i = ev.type === 'action' ? f.menuSel : chessHit(foosMenuRows(), ev);
       if (i < 0) continue;
-      if (i >= FOOS.LEVELS.length) foosLeave();
-      else foosNewGame(FOOS.LEVELS[i]);
+      const item = items[i];
+      if (!item) foosLeave();
+      else if (item === DUEL.ROW) duelOpenPick(f);
+      else foosNewGame(item);
       return;
     }
     return;
   }
+  if (f.online) duelPoll(f);   // zprávy od soupeře (35_online_hry.js)
   if (f.phase === 'over') {
     for (const k of keys) {
       if (has('up', k) || has('down', k)) f.overSel = 1 - f.overSel;
@@ -279,23 +303,27 @@ function updateFoosball(dt) {
     }
     for (const ev of events) {
       const i = ev.type === 'action' ? f.overSel : chessHit(chessOverButtons(), ev);
+      if (i === 0 && f.online) { duelOverAgain(f); return; }   // odveta / zpět do menu
       if (i === 0) { f.phase = 'menu'; f.menuSel = Math.max(0, FOOS.LEVELS.indexOf(f.level)); return; }
       if (i === 1) { foosLeave(); return; }
     }
     return;
   }
   if (f.confirmQuit) {   // „Ukončit zápas?“
-    for (const k of keys) if (k === 'Escape') { f.confirmQuit = false; return; }
+    let close = keys.includes('Escape');
     for (const ev of events) {
       const i = ev.type === 'action' ? 0 : chessHit(chessConfirmButtons(), ev);
-      if (i === 0) { f.phase = 'menu'; f.confirmQuit = false; return; }
-      if (i === 1) { f.confirmQuit = false; return; }
+      if (i === 0) { if (f.online) duelQuit(f); f.phase = 'menu'; f.confirmQuit = false; return; }
+      if (i === 1) close = true;
     }
-    return;
+    if (close) f.confirmQuit = false;
+    if (!f.online) return;   // online se zápas nedá pozastavit – běží dál
+    keys.length = 0;         // mezerník patřil oknu, ne kopu
+  } else {
+    if (keys.includes('Escape')) { f.confirmQuit = true; return; }
+    // tlačítko ✕ vlevo nahoře (na mobilu jediná cesta ven ze zápasu)
+    if (events.some((ev) => ev.x != null && pointInRect(ev.x, ev.y, FOOS_QUIT_BTN, 6))) { f.confirmQuit = true; f.fingers = {}; return; }
   }
-  if (keys.includes('Escape')) { f.confirmQuit = true; return; }
-  // tlačítko ✕ vlevo nahoře (na mobilu jediná cesta ven ze zápasu)
-  if (events.some((ev) => ev.x != null && pointInRect(ev.x, ev.y, FOOS_QUIT_BTN, 6))) { f.confirmQuit = true; f.fingers = {}; return; }
 
   // --- zápas ---
   const two = f.level.id === 'two';
@@ -303,7 +331,7 @@ function updateFoosball(dt) {
   for (const k of keys) {
     const team = two ? (k === 'Space' ? 'red' : k === 'Enter' || k === 'NumpadEnter' ? 'blue' : null)
       : (CONFIG.ACTION_KEYS.includes(k) ? 'red' : null);
-    if (team && f.kickCd[team] <= 0) { f.kickT[team] = FOOS.KICK_TIME; f.kickCd[team] = FOOS.KICK_COOLDOWN; }
+    if (team && f.kickCd[team] <= 0) foosKick(f, team);
   }
   // posun tyčí: klávesy nebo prst
   const before = { ...f.p };
@@ -324,7 +352,8 @@ function updateFoosball(dt) {
     f.p[finger.team] += Math.max(-step, Math.min(step, target - f.p[finger.team]));
     f.auto[finger.team] = true;
   }
-  if (!two) foosAi(f, dt);
+  if (f.online) foosOnlineOpp(f, dt);   // soupeřovy tyče podle sítě (35_online_hry.js)
+  else if (!two) foosAi(f, dt);
   for (const team of ['red', 'blue']) {
     f.p[team] = Math.max(-1, Math.min(1, f.p[team]));
     f.vel[team] = (f.p[team] - before[team]) / dt * 60;   // px/s (přibližně, pro švih)
@@ -339,10 +368,12 @@ function updateFoosball(dt) {
   }
   if (f.serveT > 0) {   // výkop: míček se po chvilce rozjede
     f.serveT -= dt;
-    if (f.serveT <= 0) { f.ball.vx = f.serveDir * (140 + Math.random() * 60); f.ball.vy = (Math.random() - 0.5) * 200; }
+    // online rozjede míček jen ten, kdo ho řídí (druhý ho uvidí ze sítě)
+    if (f.serveT <= 0 && (!f.online || f.own === 'me')) { f.ball.vx = f.serveDir * (140 + Math.random() * 60); f.ball.vy = (Math.random() - 0.5) * 200; }
     return;
   }
   foosPhysics(f, dt);
+  if (f.online) foosOnlineAfter(f);   // míček u soupeřovy tyče → předat (35_online_hry.js)
 }
 
 // --- kreslení ---
@@ -413,13 +444,13 @@ function renderFoosball() {
   }
   // skóre
   if (f.level) {
-    const two = f.level.id === 'two';
+    const two = f.level.id === 'two', opp = f.online ? duelOppName() : 'Počítač';
     roundRectPath(W / 2 - 170, 8, 340, 70, 12);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fill();
     drawOutlinedText(`${f.score.red} : ${f.score.blue}`, W / 2, 36, 'bold 34px sans-serif', '#ffffff', 'middle');
     drawOutlinedText(two ? 'Červení' : 'Ty', W / 2 - 110, 36, 'bold 18px sans-serif', '#ff7a6e', 'middle');
-    drawOutlinedText(two ? 'Modří' : 'Počítač', W / 2 + 112, 36, 'bold 18px sans-serif', '#7aa6ff', 'middle');
+    drawOutlinedText(two ? 'Modří' : opp, W / 2 + 112, 36, 'bold 18px sans-serif', '#7aa6ff', 'middle');
     drawOutlinedText(`${f.level.name} · do ${FOOS.WIN} gólů`, W / 2, 64, 'bold 12px sans-serif', '#e8e0d0', 'middle');
     const hint = isTouchHint()
       ? (two ? 'Každý táhne prstem na své půlce · kope se samo' : 'Táhni prstem nahoru a dolů · kope se samo')
@@ -435,7 +466,7 @@ function renderFoosball() {
   }
   if (f.phase === 'goal') {
     drawOutlinedText('GÓÓÓL!', W / 2, F.y + F.h / 2 - 20, 'bold 56px sans-serif', '#ffd54a', 'middle');
-    drawOutlinedText(FOOS.TEAMS[f.goalTeam].name + ' dali gól', W / 2, F.y + F.h / 2 + 30, 'bold 20px sans-serif', '#ffffff', 'middle');
+    drawOutlinedText(f.online ? (f.goalTeam === 'red' ? 'Dal jsi gól' : `${duelOppName()} dal gól`) : FOOS.TEAMS[f.goalTeam].name + ' dali gól', W / 2, F.y + F.h / 2 + 30, 'bold 20px sans-serif', '#ffffff', 'middle');
   } else if (f.phase === 'play' && f.serveT > 0) {
     drawOutlinedText('Výkop…', W / 2, F.y + F.h / 2 - 40, 'bold 24px sans-serif', '#ffffff', 'middle');
   }
@@ -443,15 +474,18 @@ function renderFoosball() {
   if (f.phase === 'menu') {
     drawChessBox(180, 110, 440, 420);
     drawOutlinedText('Fotbálek – vyber soupeře', 400, 150, 'bold 24px sans-serif', '#ffd54a', 'middle');
-    const rows = chessMenuRows();
-    [...FOOS.LEVELS, null].forEach((l, i) => {
+    const rows = foosMenuRows();
+    foosMenuItems().forEach((l, i) => {
       const label = l ? l.name + (l.reward ? `  ·  výhra +${l.reward} Kč` : '') : 'Odejít';
-      drawChessButton(rows[i], label, i === f.menuSel, l ? '#3d5f3a' : '#5a4636');
+      drawChessButton(rows[i], label, i === f.menuSel, !l ? '#5a4636' : l === DUEL.ROW ? '#2f5a7a' : '#3d5f3a');
     });
+    drawDuelNote(92);   // „Bob neodpovídá“ (35_online_hry.js)
+  } else if (f.phase === 'pick' || f.phase === 'wait') {
+    drawDuelPick(f, 'foos');   // výběr soupeře online (35_online_hry.js)
   } else if (f.phase === 'over') {
     drawChessBox(200, 200, 400, 250);
     drawOutlinedText(f.msg, 400, 262, 'bold 22px sans-serif', f.reward || f.level.id === 'two' ? '#ffd54a' : '#ffffff', 'middle');
-    chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? 'Hrát znovu' : 'Odejít', i === f.overSel));
+    chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? (f.online ? duelOverLabel(f) : 'Hrát znovu') : 'Odejít', i === f.overSel));
   } else if (f.confirmQuit) {
     drawChessBox(200, 220, 400, 170);
     drawOutlinedText('Ukončit zápas?', 400, 270, 'bold 24px sans-serif', '#ffffff', 'middle');

@@ -69,6 +69,7 @@ js/31_menu.js         ☰ Hlavní menu / Pozastaveno ve hře (od kamaráda, napo
 js/32_pingpong.js     minihra pingpong u stolů v hale s pingpongem
 js/33_skiny.js        výběr startu (venku / ve skříňkách), Locker v Dolních šatnách a výběr skinu
 js/34_hlas.js         hlasový chat (WebRTC): ve stejné místnosti, hlasitost podle vzdálenosti, mluví se při držení V / 🎤
+js/35_online_hry.js   pingpong a fotbálek proti kamarádovi online (výzva, přijetí, síť během zápasu)
 js/15_hlavni.js       update/render podle obrazovky, herní smyčka, START (musí být poslední)
 obrazky/              hlavy 48 × 48 px: hrac.png, mala.png, krivacek.png, rauscher.png, holub.png, soumar.png, lencova.png, vesela.png, mraz.png …
 zvuky/                hudba: pozadí/ = hudba na pozadí (CONFIG.MUSIC_PLAYLIST), „Treplev.mp3“ (v C202 u Kluse), „fotbálek.mp3“ (u fotbálku), Mykyta/ = písničky od Mykyho
@@ -524,7 +525,7 @@ Další učitelé bez úkolu: Křiváček (kabinet2, hlava z `Křiváček oprava
 
 ## Multiplayer (`js/29_multiplayer.js`)
 
-Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. smajlíky** (hotové – uživatel chtěl 10 smajlíků na výběr, žádné psaní), **hlasový chat** (hotový, `js/34_hlas.js`), **3. společný svět** (společné úkoly, šachy a fotbálek proti sobě online – zatím ne).
+Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. smajlíky** (hotové – uživatel chtěl 10 smajlíků na výběr, žádné psaní), **hlasový chat** (hotový, `js/34_hlas.js`), **3. společný svět**: **pingpong a fotbálek pro dva online** (hotové, `js/35_online_hry.js`); společné úkoly a šachy proti sobě zatím ne.
 
 ### Jak se hraje online
 
@@ -555,19 +556,33 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - **TURN:** jen STUN servery Googlu (`VOICE.ICE`). Některé sítě (školní Wi-Fi, mobilní data) přímé spojení nepustí – pak je potřeba TURN server (přeposílá zvuk), třeba účet zdarma na metered.ca, a dopsat ho do `VOICE.ICE`. Zatím nepřidaný.
 - Ověřeno se 3 headless Chromy (`--use-fake-device-for-media-stream` = pípající mikrofon, `--use-fake-ui-for-media-stream`, `--disable-features=WebRtcHideLocalIpsWithMdns`) proti falešné databázi: spojí se jen ti dva s hlasem, mluví jen při držení V / 🎤 (i dotykem), 🔊 u jména, hlasitost z dálky 0,44, ztlumení, rozpojení v jiné místnosti a nové spojení po návratu, vypnutí; schránky v databázi zůstanou prázdné.
 
+### Pingpong a fotbálek pro dva (`js/35_online_hry.js`)
+
+- **Výzva:** v menu pingpongu i fotbálku je modrý řádek **„👥 Online – vyzvat hráče“** (`DUEL.ROW`, jen když je nastavená databáze; bez Online ho zapne a zeptá se na jméno). Ukáže až 4 online hráče ve stejné místnosti, nejbližší první (`duelCandidates`, kdo už hraje s někým jiným, chybí). Výběr → „Čekám, jestli Bob přijme…“ (30 s, `DUEL.ASK_TIME`, Zrušit / Esc). Odmítnutí, vypršení nebo odchod se ukáže červeně v menu (`duel.note`).
+- **Vyzvaný** dostane nahoře okno „🏓 Alice tě vyzývá na pingpong!“ s **Přijmout (J) / Odmítnout (X)** (`drawDuelInvite`, `takeDuelTaps`, zvuk). Ukáže se ve hře (bez dialogu a menu ☰) nebo v menu pingpongu / fotbálku; přijetí ho rovnou přenese do zápasu. Když se vyzvou navzájem, zápas začne sám.
+- Výzva jde polem **`z`** v záznamu hráče: `'komu|pp nebo foos|id zápasu|ch / ok / no'` (`duelZ`, `duelParse`).
+- **Během zápasu** posílá každý PUTem nejčastěji po 0,05 s (`DUEL.SEND_EVERY`, beze změny jednou za 0,5 s) svůj stav do **`zapasy/<id zápasu>/<mé id>`** = `{ d: JSON, t }` a proudem sleduje celé `zapasy/<id zápasu>`. Souřadnice v síti jsou z pohledu vyzyvatele (role `h`), druhý (`g`) má stůl otočený o 180° – **každý hraje zdola (pingpong) / zleva červenými (fotbálek)**.
+- **Kdo rozhoduje:** stav nese mou poslední událost `e` (`q` = pořadí, `k` = druh, `sc` = skóre z pohledu `h`); platí ta s vyšším `q` a rozhoduje vždy jen jeden:
+  - **pingpong:** ten, ke komu míček letí (své pádlo vidí bez zpoždění). Pošle svůj úder (`k: 's'`, poloha a rychlost míčku) nebo bod (`k: 'p'` s textem pro soupeře). Soupeř si let spočítá sám a dožene 70 % zpoždění sítě. Když u mě soupeř míček „trefí“ nebo spadne, míček zamrzne (`b.frozen`) a čeká na jeho zprávu.
+  - **fotbálek:** ten, čí tyč je míčku nejblíž (`f.own`). Když se míček dostane k soupeřově tyči (o 8 px blíž), předá ho (`k: 'h'`); gól pošle `k: 'g'` (výkop pak rozjede ten, kdo gól dostal). Kdo míček neřídí, vidí jeho polohu ze sítě posunutou o zpoždění a gól sám nedá (`boss` ve `foosPhysics`). Soupeřovy tyče (`p`) a kopy (`kk` = počet kopů, `foosKick`) jdou ve stavu.
+- **Konec:** bez odměny (dají se hrát dvě záložky). „**Odveta**“ chtějí oba (`rm: 1`), hostitel pošle `k: 'n'`. Odchod (✕ → Ano, Esc, Odejít) zápas ukončí i soupeři: „Bob odešel ze zápasu“ (pole `z` zmizí, nebo 8 s bez zprávy – `DUEL.GONE`). Online zápas se nedá pozastavit, „Ukončit zápas?“ ho nechá běžet.
+- **Pojistka:** když databáze odmítne záznam s `z` (401 / 403 = nenahraná nová pravidla), zápasy se do zavření hry vypnou (`duel.blocked`) a hráč ostatním nezmizí; v menu je „Online zápasy zatím nejdou – databáze nemá nová pravidla“.
+- Staré zápasy (spadlý prohlížeč) starší než 10 minut smaže ten, kdo začíná nový zápas (`duelPurge`).
+
 ### Databáze
 
 - **Firebase Realtime Database** v uživatelově vlastním projektu **`darek-online`** (založil ho sám, účet `tonda.zajic08@gmail.com`): `MP.DB_URL` = `https://darek-online-default-rtdb.europe-west1.firebasedatabase.app`. Žebříček je dál v kamarádově projektu `darek-30b0c` (Firestore, `28_speedrun.js`) – jsou to dvě nezávislé věci.
 - Přes REST bez knihoven: vlastní záznam `hraci/<id>` = `{ n, r, x, y, a?, e?, ek?, s?, v?, t }` (`e`/`ek` smajlík, `s` = id skinu, když není výchozí, `v: 1` = má zapnutý hlas) se posílá PUTem (nejčastěji po 0,15 s, `MP.SEND_EVERY`, když hráč stojí, jednou za 3 s, `MP.HEARTBEAT`), změny ostatních chodí proudem `EventSource` (události `put` / `patch`, kopie v `mp.raw`, `mpSetAt`, `mpSync`). `t` je čas serveru (`{".sv": "timestamp"}`), rozdíl hodin se zjistí z vlastního záznamu (`mp.offset`).
 - Kdo se neozval 12 s (`MP.STALE`), není vidět. Záznamy starší než 2 minuty (`MP.PURGE`) smaže kdokoli online. Na úvodu, na závěru, po vypnutí a při zavření stránky (`pagehide`) se vlastní záznam smaže.
-- **Pravidla** jsou v `tools/firebase_pravidla_multiplayer.json` (Firebase konzole → Realtime Database → Pravidla → vložit → Publikovat). Číst jde jen `hraci` a schránky `hlas/<id>`, zapisovat jen jednotlivé `hraci/<id>` s poli n (1–16 znaků), r, x, y, a, e (0–9), ek, s (do 24 znaků), v (= 1), t (= čas serveru) a zprávy `hlas/<id>/<klíč>` s poli f, k (offer / answer), d (do 20 000 znaků), t; cokoli jiného databáze odmítne. Proto se celé `hraci` smazat nedá, jen po jednom. **Při přidání nového pole (krok 2, 3) se musí upravit i pravidla**, jinak databáze odmítne celý zápis a hráči se přestanou vidět.
+- **Pravidla** jsou v `tools/firebase_pravidla_multiplayer.json` (Firebase konzole → Realtime Database → Pravidla → vložit → Publikovat). Číst jde jen `hraci`, schránky `hlas/<id>` a `zapasy`, zapisovat jen jednotlivé `hraci/<id>` s poli n (1–16 znaků), r, x, y, a, e (0–9), ek, s (do 24 znaků), v (= 1), z (do 64 znaků), t (= čas serveru), zprávy `hlas/<id>/<klíč>` s poli f, k (offer / answer), d (do 20 000 znaků), t a stav zápasu `zapasy/<zápas>/<id>` s poli d (do 2000 znaků), t; cokoli jiného databáze odmítne. Proto se celé `hraci` smazat nedá, jen po jednom. **Při přidání nového pole (krok 2, 3) se musí upravit i pravidla**, jinak databáze odmítne celý zápis a hráči se přestanou vidět.
 - Firebase povoluje přístup odkudkoli (`Access-Control-Allow-Origin: *`), takže online jde i ze `jeden_soubor/hra_darek.html` otevřeného z disku.
 - Bez adresy (`VLOŽ_…`) se přepínač Online neukáže. Adresa jde dočasně přepsat v URL: `index.html?mpdb=http://127.0.0.1:8001`.
 
 ### Testy
 
-- **Bez Firebase:** falešná databáze `python tools/falesna_databaze.py . 8001` (REST GET/PUT/POST/DELETE na libovolné cestě + proud `text/event-stream`, statické soubory hry; pravidla nekontroluje) a `index.html?mpdb=http://127.0.0.1:8001`. Dvě hry v headless Chrome (`C:\Program Files\Google\Chrome\Application\chrome.exe --headless=new --remote-debugging-port=…`) řízené přes DevTools protokol z Pythonu (`pip install websocket-client`, `Runtime.evaluate`, snímek přes `canvas.toDataURL`). Herní smyčka se v testu pumpuje ručně `update(1/60)`.
+- **Bez Firebase:** falešná databáze `python tools/falesna_databaze.py . 8001` (REST GET/PUT/POST/DELETE na libovolné cestě + proud `text/event-stream`, statické soubory hry; pravidla nekontroluje; třetí číslo = zpoždění v ms jako u skutečné databáze, např. `… . 8001 150`) a `index.html?mpdb=http://127.0.0.1:8001`. Dvě hry v headless Chrome (`C:\Program Files\Google\Chrome\Application\chrome.exe --headless=new --remote-debugging-port=…`) řízené přes DevTools protokol z Pythonu (`pip install websocket-client`, `Runtime.evaluate`, snímek přes `canvas.toDataURL`). Herní smyčka se v testu pumpuje ručně `update(1/60)`.
 - Ověřené: vidí se navzájem na správném místě, chůze, ikonka u šachů (`openChess()`), odchod do jiné místnosti, návrat na úvod i vypnutí Online; smajlíky (tlačítko, T a čísla, druhý hráč vidí bublinu, po 3 s pole `e` zmizí); skin druhého hráče. Totéž prošlo i naostro proti `darek-online` (testovací záznamy se pak smažou ručně `curl -X DELETE …/hraci/<id>.json`).
+- **Online zápasy** (22. 10. 2026, falešná databáze bez zpoždění i se 150 ms): dva Chromy s roboty (pádlo / tyče jdou za míčkem, občas schválně minou, `update` obalený robotem) – výzva, okno u vyzvaného, přijetí, pingpong 7:3 ↔ 3:7 i 7:4 se zpožděním (výměny až 68 úderů), fotbálek 5:2 / 1:5 i se zpožděním, skóre a události (`seq`) u obou stejné, odveta, odchod soupeře, odmítnutí pole `z` (401) bez zmizení hráče. **Naostro proti `darek-online` zatím nezkoušeno** – nejdřív musí uživatel nahrát nová pravidla.
 
 ### Kamarádova větev `mptest` (nepřevzatá)
 
@@ -577,7 +592,7 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 
 ## Pingpong (`js/32_pingpong.js`)
 
-- U obou stolů v hale s pingpongem (`SPOTS`, `pingpongTableRect` = bližší stůl) mezerník / ťuknutí otevře obrazovku `'pingpong'`. Menu, konec a „Ukončit zápas?“ sdílí vzhled se šachy a fotbálkem, ✕ vlevo nahoře jako u fotbálku.
+- U obou stolů v hale s pingpongem (`SPOTS`, `pingpongTableRect` = bližší stůl) mezerník / ťuknutí otevře obrazovku `'pingpong'`. V menu je i online soupeř (`35_online_hry.js`, viz Multiplayer). Menu, konec a „Ukončit zápas?“ sdílí vzhled se šachy a fotbálkem, ✕ vlevo nahoře jako u fotbálku.
 - Pohled shora: ty dole (červené pádlo), počítač nahoře. Míček má výšku `z`: kreslí se o `z × PP.LIFT` výš a větší, stín je na stole. **Zásah se počítá s míčkem tam, kde je vidět** (ne se stínem) – jinak hráč mířil na míček a netrefil ho.
 - Ovládání: pádlo jde za myší, na mobilu za prstem a je o `PP.TOUCH_LIFT` nad prstem, ať je vidět; nebo šipky / WASD. Odpaluje se samo, když míček po odskoku na mé straně narazí do pádla:
   - směr do stran = kde míček pádlo trefí (střed / kraj, `ppHitMe`), boční pohyb pádla přidá jen trochu (`vx / 2600`) – při natahování pro míček nelétá do autu;

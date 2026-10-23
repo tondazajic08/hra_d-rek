@@ -7,6 +7,8 @@ function update(dt) {
   tickSpeedrun(dt);   // časovač režimu Speedrun (28_speedrun.js)
   updateMultiplayer(dt);   // online hráči (29_multiplayer.js)
   updateVoice();           // hlasový chat (34_hlas.js)
+  updateDuel(dt);          // online zápasy: výzvy a síť (35_online_hry.js)
+  takeDuelTaps();          // okno s výzvou: Přijmout / Odmítnout
   takeOnlineTaps();        // tlačítko Online a jméno na úvodu
   takeQualityTaps();       // úvod: tlačítko Kvalita (30_kvalita.js)
   takeMenuButtonTaps();    // ve hře: tlačítko ☰ Hlavní menu (31_menu.js)
@@ -76,6 +78,7 @@ function render() {
   drawMenuButton();    // ☰ Hlavní menu ve hře (31_menu.js)
   drawEmoteUi();       // 😊 smajlíky ve hře (29_multiplayer.js)
   drawVoiceButton();   // 🎤 hlas ve hře (34_hlas.js)
+  drawDuelInvite();    // výzva na pingpong / fotbálek (35_online_hry.js)
   drawQualityButton(); // úvod: Kvalita (30_kvalita.js)
   drawMusicMenu();     // seznam písniček (P)
   drawModePick();      // výběr režimu při nové hře (úvod i závěr)

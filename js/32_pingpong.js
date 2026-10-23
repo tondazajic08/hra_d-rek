@@ -40,7 +40,9 @@ const PP = {
 };
 const PP_NET_Y = PP.TABLE.y + PP.TABLE.h / 2;
 const PP_QUIT_BTN = { x: 12, y: 14, w: 56, h: 44 };   // vlevo nahoře (vpravo je zvuk), jako u fotbálku
-const ppMenuRows = () => [...PP.LEVELS, null].map((_, i) => ({ x: 210, y: 200 + i * 62, w: 380, h: 50 }));
+// menu: obtížnosti, online soupeř (jen s databází, 35_online_hry.js) a Odejít (null)
+const ppMenuItems = () => [...PP.LEVELS, ...(mpReady() ? [DUEL.ROW] : []), null];
+const ppMenuRows = () => ppMenuItems().map((_, i) => ({ x: 210, y: 186 + i * 56, w: 380, h: 48 }));
 
 // Stůl, u kterého hráč stojí (v hale jsou dva)
 function pingpongTableRect() {
@@ -65,6 +67,8 @@ function openPingpong() {
 }
 function ppLeave() {
   const g = state.pp;
+  if (g && g.online) duelQuit(g);   // online zápas skončí i u soupeře (35_online_hry.js)
+  if (duel.ask) duelCancelAsk();
   state.pp = null;
   setScreen('playing');
   input.events.length = 0;
@@ -114,6 +118,7 @@ function ppShoot(g, side, aimX, power, spin) {
   b.bounces = 0;
   g.rally++;
   playSound([[side === 'me' ? 620 : 520, 0, 0.035]], 'square');
+  if (g.online && side === 'me') ppOnlineShot(g);   // pošle úder soupeři (35_online_hry.js)
 }
 
 // Moje pádlo trefilo míček: směr podle místa zásahu a švihu, síla podle švihu dopředu
@@ -142,17 +147,24 @@ function ppHitAi(g) {
 function ppText(g, text, x, y, color) { g.texts.push({ text, x, y, color, t: 0 }); }
 
 function ppPoint(g, winner, why) {
+  // online bod určuje ten, ke komu míček letěl – já jen počkám na jeho zprávu (35_online_hry.js)
+  if (g.online && g.ball.lastHit === 'me') { g.ball.frozen = true; return; }
   g.score[winner]++;
+  const { me, ai } = g.score, total = me + ai;
+  // podání se střídá po 2 bodech, za stavu (WIN−1):(WIN−1) po každém
+  const deuce = me >= PP.WIN - 1 && ai >= PP.WIN - 1;
+  if (deuce || total % 2 === 0) g.server = g.server === 'me' ? 'ai' : 'me';
+  if (g.online) why = ppOnlinePoint(g, winner, why);   // pošle bod soupeři
+  ppShowPoint(g, winner, why);
+}
+function ppShowPoint(g, winner, why) {
   g.phase = 'point';
   g.pointT = 1.2;
   g.pointMsg = why;
   g.pointWinner = winner;
   playSound(winner === 'me' ? [[659, 0, 0.07], [880, 0.08, 0.1]] : [[330, 0, 0.1], [262, 0.11, 0.12]]);
-  const { me, ai } = g.score, total = me + ai;
-  if ((me >= PP.WIN || ai >= PP.WIN) && Math.abs(me - ai) >= 2) { ppFinish(g); return; }
-  // podání se střídá po 2 bodech, za stavu (WIN−1):(WIN−1) po každém
-  const deuce = me >= PP.WIN - 1 && ai >= PP.WIN - 1;
-  if (deuce || total % 2 === 0) g.server = g.server === 'me' ? 'ai' : 'me';
+  const { me, ai } = g.score;
+  if ((me >= PP.WIN || ai >= PP.WIN) && Math.abs(me - ai) >= 2) ppFinish(g);
 }
 function ppFinish(g) {
   g.phase = 'over';
@@ -160,9 +172,8 @@ function ppFinish(g) {
   const s = `${g.score.me}:${g.score.ai}`;
   if (g.score.me > g.score.ai) {
     g.reward = g.level.reward;
-    state.money += g.reward;
-    saveProgress();
-    g.msg = `Vyhrál jsi ${s} a dostal ${g.reward} Kč`;
+    if (g.reward) { state.money += g.reward; saveProgress(); }
+    g.msg = g.online ? `Vyhrál jsi ${s} proti ${duelOppName()}!` : `Vyhrál jsi ${s} a dostal ${g.reward} Kč`;
     playSound(CONFIG.SOUND_COMPLETE);
   } else {
     g.msg = `Prohrál jsi ${s}`;
@@ -177,7 +188,7 @@ const ppOther = (s) => (s === 'me' ? 'ai' : 'me');
 
 function ppPhysics(g, dt) {
   const b = g.ball, steps = 4, h = dt / steps;
-  for (let s = 0; s < steps && g.phase === 'play'; s++) {
+  for (let s = 0; s < steps && g.phase === 'play' && !b.frozen; s++) {
     b.x += b.vx * h + 0.5 * b.ax * h * h;
     b.vx += b.ax * h;
     b.y += b.vy * h;
@@ -189,7 +200,9 @@ function ppPhysics(g, dt) {
       if (b.lastHit !== ppOther(side) || b.bounces !== 1 || ppSideOf(b.bounceY) !== side) continue;
       // trefuje se míček tam, kde je vidět (nad stínem), ne jeho stín
       if (b.z > PP.REACH_Z || Math.hypot(b.x - p.x, b.y - b.z * PP.LIFT - p.y) > PP.PADDLE_R + PP.BALL_R) continue;
-      if (side === 'me') ppHitMe(g); else ppHitAi(g);
+      if (side === 'me') ppHitMe(g);
+      else if (g.online) { b.frozen = true; return; }   // soupeř míček trefil – počká se na jeho úder (35_online_hry.js)
+      else ppHitAi(g);
     }
     if (b.z <= 0 && b.vz < 0) {
       const hitter = b.lastHit, receiver = ppOther(hitter);
@@ -296,8 +309,9 @@ function updatePingpong(dt) {
   for (const t of g.texts) t.t += dt;
   g.texts = g.texts.filter((t) => t.t < 1);
 
+  if (g.phase === 'pick' || g.phase === 'wait') { duelPickUpdate(g, 'pp', events, keys); return; }   // online výzva (35_online_hry.js)
   if (g.phase === 'menu') {
-    const n = PP.LEVELS.length + 1;
+    const items = ppMenuItems(), n = items.length;
     for (const k of keys) {
       if (has('up', k)) g.menuSel = (g.menuSel + n - 1) % n;
       if (has('down', k)) g.menuSel = (g.menuSel + 1) % n;
@@ -306,11 +320,15 @@ function updatePingpong(dt) {
     for (const ev of events) {
       const i = ev.type === 'action' ? g.menuSel : chessHit(ppMenuRows(), ev);
       if (i < 0) continue;
-      if (i >= PP.LEVELS.length) ppLeave(); else ppNewGame(PP.LEVELS[i]);
+      const item = items[i];
+      if (!item) ppLeave();
+      else if (item === DUEL.ROW) duelOpenPick(g);
+      else ppNewGame(item);
       return;
     }
     return;
   }
+  if (g.online) duelPoll(g);   // zprávy od soupeře (35_online_hry.js)
   if (g.phase === 'over') {
     for (const k of keys) {
       if (has('up', k) || has('down', k)) g.overSel = 1 - g.overSel;
@@ -318,25 +336,28 @@ function updatePingpong(dt) {
     }
     for (const ev of events) {
       const i = ev.type === 'action' ? g.overSel : chessHit(chessOverButtons(), ev);
+      if (i === 0 && g.online) { duelOverAgain(g); return; }   // odveta / zpět do menu
       if (i === 0) { g.phase = 'menu'; g.menuSel = Math.max(0, PP.LEVELS.indexOf(g.level)); return; }
       if (i === 1) { ppLeave(); return; }
     }
     return;
   }
   if (g.confirmQuit) {   // „Ukončit zápas?“
-    for (const k of keys) if (k === 'Escape') { g.confirmQuit = false; return; }
+    let close = keys.includes('Escape');
     for (const ev of events) {
       const i = ev.type === 'action' ? 0 : chessHit(chessConfirmButtons(), ev);
-      if (i === 0) { g.phase = 'menu'; g.confirmQuit = false; return; }
-      if (i === 1) { g.confirmQuit = false; return; }
+      if (i === 0) { if (g.online) duelQuit(g); g.phase = 'menu'; g.confirmQuit = false; return; }
+      if (i === 1) close = true;
     }
-    return;
+    if (close) g.confirmQuit = false;
+    if (!g.online) return;   // online se zápas nedá pozastavit – běží dál
+  } else {
+    if (keys.includes('Escape')) { g.confirmQuit = true; return; }
+    if (events.some((ev) => ev.x != null && pointInRect(ev.x, ev.y, PP_QUIT_BTN, 6))) { g.confirmQuit = true; return; }
   }
-  if (keys.includes('Escape')) { g.confirmQuit = true; return; }
-  if (events.some((ev) => ev.x != null && pointInRect(ev.x, ev.y, PP_QUIT_BTN, 6))) { g.confirmQuit = true; return; }
 
   ppMoveMe(g, dt);
-  ppAi(g, dt);
+  if (g.online) ppOnlineOpp(g, dt); else ppAi(g, dt);
 
   if (g.phase === 'point') {
     g.pointT -= dt;
@@ -355,9 +376,10 @@ function updatePingpong(dt) {
         const aimX = Math.max(-0.8, Math.min(0.8, (g.me.x - PP.TABLE.x - PP.TABLE.w / 2) / PP.TABLE.w + g.me.vx / 1200));
         ppShoot(g, 'me', aimX, power, g.me.vx * 0.6);
       }
-    } else if (g.serveT > g.aiServeAt) ppHitAi(g);
+    } else if (!g.online && g.serveT > g.aiServeAt) ppHitAi(g);   // online podá soupeř sám
     return;
   }
+  if (b.frozen) return;   // online: čeká se, co na to soupeř
   b.trail.push({ x: b.x, y: b.y - b.z * PP.LIFT });
   if (b.trail.length > 7) b.trail.shift();
   ppPhysics(g, dt);
@@ -400,7 +422,7 @@ function renderPingpong() {
   drawRect({ x: T.x + T.w + 12, y: PP_NET_Y - 6, w: 6, h: 12 }, '#555');
 
   if (g.level) {
-    const b = g.ball;
+    const b = g.ball, opp = g.online ? duelOppName() : 'Počítač';
     drawPpPaddle(g.ai, false);
     if (b) {
       // stín míčku na stole / zemi, pak míček (výš = výš na obrazovce a větší)
@@ -424,11 +446,11 @@ function renderPingpong() {
     // skóre vlevo a vpravo od stolu
     roundRectPath(30, 230, 220, 140, 14);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)'; ctx.fill();
-    drawOutlinedText('Počítač', 140, 258, 'bold 16px sans-serif', '#c7c7c7', 'middle');
+    drawOutlinedText(opp, 140, 258, 'bold 16px sans-serif', '#c7c7c7', 'middle');
     drawOutlinedText(`${g.score.ai}`, 140, 290, 'bold 30px sans-serif', '#ffffff', 'middle');
     drawOutlinedText(`${g.score.me}`, 140, 322, 'bold 30px sans-serif', '#ffffff', 'middle');
     drawOutlinedText('Ty', 140, 352, 'bold 16px sans-serif', '#ff7a6e', 'middle');
-    drawOutlinedText(g.server === 'me' ? '🏓 podáváš ty' : '🏓 podává počítač', 140, 392, 'bold 13px sans-serif', '#ffffff', 'middle');
+    drawOutlinedText(g.server === 'me' ? '🏓 podáváš ty' : g.online ? `🏓 podává ${opp}` : '🏓 podává počítač', 140, 392, 'bold 13px sans-serif', '#ffffff', 'middle');
     drawOutlinedText(`${g.level.name}`, 660, 258, 'bold 13px sans-serif', '#ffffff', 'middle');
     drawOutlinedText(`do ${PP.WIN}, rozdíl 2`, 660, 280, 'bold 12px sans-serif', '#e8e0d0', 'middle');
 
@@ -439,7 +461,7 @@ function renderPingpong() {
       drawOutlinedText(isTouchHint() ? 'Podání: švihni prstem nahoru' : 'Podání: švihni pádlem dopředu nebo mezerník', W / 2, PP_NET_Y + 60, 'bold 17px sans-serif', '#ffd54a', 'middle');
     }
     if (g.phase === 'point') {
-      drawOutlinedText(g.pointWinner === 'me' ? 'Bod pro tebe!' : 'Bod pro počítač', W / 2, PP_NET_Y - 30, 'bold 34px sans-serif', g.pointWinner === 'me' ? '#ffd54a' : '#ffffff', 'middle');
+      drawOutlinedText(g.pointWinner === 'me' ? 'Bod pro tebe!' : `Bod pro ${g.online ? opp : 'počítač'}`, W / 2, PP_NET_Y - 30, 'bold 34px sans-serif', g.pointWinner === 'me' ? '#ffd54a' : '#ffffff', 'middle');
       drawOutlinedText(g.pointMsg, W / 2, PP_NET_Y + 12, 'bold 16px sans-serif', '#ffffff', 'middle');
     }
     if (g.phase === 'play' || g.phase === 'point') {   // ✕ = ukončit zápas (hlavně pro mobil)
@@ -455,14 +477,18 @@ function renderPingpong() {
     drawChessBox(180, 120, 440, 380);
     drawOutlinedText('🏓 Pingpong – vyber soupeře', 400, 162, 'bold 24px sans-serif', '#ffd54a', 'middle');
     const rows = ppMenuRows();
-    [...PP.LEVELS, null].forEach((l, i) => {
-      drawChessButton(rows[i], l ? `${l.name}  ·  výhra +${l.reward} Kč` : 'Odejít', i === g.menuSel, l ? '#3d5f3a' : '#5a4636');
+    ppMenuItems().forEach((l, i) => {
+      const label = !l ? 'Odejít' : l === DUEL.ROW ? l.name : `${l.name}  ·  výhra +${l.reward} Kč`;
+      drawChessButton(rows[i], label, i === g.menuSel, !l ? '#5a4636' : l === DUEL.ROW ? '#2f5a7a' : '#3d5f3a');
     });
-    drawOutlinedText(`Hraje se do ${PP.WIN} bodů s rozdílem 2`, 400, 470, 'bold 13px sans-serif', '#e8d3a8', 'middle');
+    drawOutlinedText(`Hraje se do ${PP.WIN} bodů s rozdílem 2`, 400, 478, 'bold 13px sans-serif', '#e8d3a8', 'middle');
+    drawDuelNote(100);   // „Bob neodpovídá“ (35_online_hry.js)
+  } else if (g.phase === 'pick' || g.phase === 'wait') {
+    drawDuelPick(g, 'pp');   // výběr soupeře online (35_online_hry.js)
   } else if (g.phase === 'over') {
     drawChessBox(200, 200, 400, 250);
     drawOutlinedText(g.msg, 400, 262, 'bold 22px sans-serif', g.reward ? '#ffd54a' : '#ffffff', 'middle');
-    chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? 'Hrát znovu' : 'Odejít', i === g.overSel));
+    chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? (g.online ? duelOverLabel(g) : 'Hrát znovu') : 'Odejít', i === g.overSel));
   } else if (g.confirmQuit) {
     drawChessBox(200, 220, 400, 170);
     drawOutlinedText('Ukončit zápas?', 400, 270, 'bold 24px sans-serif', '#ffffff', 'middle');

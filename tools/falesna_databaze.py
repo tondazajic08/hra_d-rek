@@ -1,11 +1,13 @@
 # Falešná Firebase Realtime Database na testy multiplayeru (REST: GET/PUT/POST/DELETE + proud EventSource) + statické soubory hry
 # Umí libovolné cesty (hraci/…, hlas/<id>/…); pravidla nekontroluje.
 # Spuštění: python tools/falesna_databaze.py . 8001   → hra: http://127.0.0.1:8001/index.html?mpdb=http://127.0.0.1:8001
+# Třetí číslo = zpoždění v ms jako u skutečné databáze (polovina na zápis, polovina na proud): … . 8001 120
 import json, sys, time, threading, queue, random, string
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = sys.argv[1]
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
+DELAY = (int(sys.argv[3]) if len(sys.argv) > 3 else 0) / 2000   # s na každou cestu
 DB = {}
 LOCK = threading.Lock()
 CLIENTS = []   # (cesta jako seznam, fronta)
@@ -35,9 +37,9 @@ def set_at(parts, v):
 def broadcast(parts, data):
     for cp, q in list(CLIENTS):
         if parts[:len(cp)] == cp:   # změna uvnitř sledované cesty
-            q.put('event: put\ndata: ' + json.dumps({'path': '/' + '/'.join(parts[len(cp):]), 'data': data}) + '\n\n')
+            q.put((time.time(), 'event: put\ndata: ' + json.dumps({'path': '/' + '/'.join(parts[len(cp):]), 'data': data}) + '\n\n'))
         elif cp[:len(parts)] == parts:   # přepsaný předek sledované cesty
-            q.put('event: put\ndata: ' + json.dumps({'path': '/', 'data': get(cp)}) + '\n\n')
+            q.put((time.time(), 'event: put\ndata: ' + json.dumps({'path': '/', 'data': get(cp)}) + '\n\n'))
 
 def push_id():
     return '-' + ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(19))
@@ -63,6 +65,7 @@ class H(SimpleHTTPRequestHandler):
         body = json.dumps(data).encode()
         self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(body)
     def body(self):
+        if DELAY: time.sleep(DELAY)
         n = int(self.headers.get('Content-Length', 0))
         return resolve(json.loads(self.rfile.read(n) or b'null'))
     def do_GET(self):
@@ -79,7 +82,9 @@ class H(SimpleHTTPRequestHandler):
             try:
                 self.wfile.write(('event: put\ndata: ' + json.dumps({'path': '/', 'data': snap}) + '\n\n').encode()); self.wfile.flush()
                 while True:
-                    try: msg = q.get(timeout=10)
+                    try:
+                        t, msg = q.get(timeout=10)
+                        if DELAY: time.sleep(max(0, t + DELAY - time.time()))
                     except queue.Empty: msg = 'event: keep-alive\ndata: null\n\n'
                     self.wfile.write(msg.encode()); self.wfile.flush()
             except Exception:
@@ -101,6 +106,7 @@ class H(SimpleHTTPRequestHandler):
             set_at(parts + [k], v); broadcast(parts + [k], v)
         self.reply({'name': k})
     def do_DELETE(self):
+        if DELAY: time.sleep(DELAY)
         parts = self.parts()
         with LOCK:
             set_at(parts, None); broadcast(parts, None)

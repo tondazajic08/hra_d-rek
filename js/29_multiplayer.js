@@ -125,7 +125,7 @@ function mpSync() {
     if (typeof v.r !== 'string' || !Number.isFinite(v.x) || !Number.isFinite(v.y) || !Number.isFinite(v.t)) continue;
     const o = mp.others[id] || { dx: v.x, dy: v.y, phase: 0, blend: 0, color: mpColor(id) };
     if (o.r !== v.r) { o.dx = v.x; o.dy = v.y; }   // přešel do jiné místnosti: neklouzat přes celou mapu
-    Object.assign(o, { id, v: v.v === 1, n: cleanPlayerName(v.n) || '?', r: v.r, x: v.x, y: v.y, a: typeof v.a === 'string' ? v.a : '', s: typeof v.s === 'string' ? v.s : '', t: v.t });
+    Object.assign(o, { id, v: v.v === 1, n: cleanPlayerName(v.n) || '?', r: v.r, x: v.x, y: v.y, a: typeof v.a === 'string' ? v.a : '', s: typeof v.s === 'string' ? v.s : '', z: typeof v.z === 'string' ? v.z : '', t: v.t });
     if (Number.isInteger(v.e) && MP.EMOTES[v.e] && v.ek !== o.ek) { o.ek = v.ek; o.emote = MP.EMOTES[v.e]; o.emoteT = state.time; }   // nový smajlík
     next[id] = o;
   }
@@ -165,12 +165,17 @@ function mpMyRecord() {
   if (mp.emote && state.time - mp.emote.t < MP.EMOTE_TIME) { rec.e = mp.emote.i; rec.ek = mp.emote.k; }
   if (mySkin !== SKINS[0]) rec.s = mySkin.id;   // skin z Lockeru (33_skiny.js)
   if (voice.on) rec.v = 1;   // má zapnutý hlas (34_hlas.js)
+  const z = duelZ();
+  if (z) rec.z = z;          // výzva / zápas v pingpong nebo fotbálek (35_online_hry.js)
   return rec;
 }
 function mpSend(rec) {
   mp.sending = true;
   fetch(mpUrl(mp.id), { method: 'PUT', body: JSON.stringify({ ...rec, t: { '.sv': 'timestamp' } }) })
-    .then((r) => { if (!r.ok) throw new Error(r.status); })
+    .then((r) => {
+      if (rec.z && (r.status === 401 || r.status === 403)) duelBlocked();   // databáze bez nových pravidel odmítne pole z (35_online_hry.js)
+      if (!r.ok) throw new Error(r.status);
+    })
     .catch(() => { mp.status = 'error'; mp.last = ''; })
     .finally(() => { mp.sending = false; });
 }

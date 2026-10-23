@@ -39,6 +39,7 @@ const voice = {
   inbox: null,        // EventSource na hlas/<mé id>
   peers: {},          // id → { pc, born, ok, el, src, gain, an, buf, talkT }
   retry: {},          // id → kdy (herní čas) smím znovu nabídnout
+  fails: {},          // id → kolikrát se nepodařilo spojit (ukáže se v ☰)
   muted: new Set(),   // ztlumení hráči (jen do zavření hry)
   pttKey: false, pttPointer: null,
 };
@@ -122,7 +123,7 @@ function voiceNewPeer(id) {
   for (const t of voice.stream.getAudioTracks()) pc.addTrack(t, voice.stream);
   pc.ontrack = (e) => voiceAttach(peer, e.streams[0] || new MediaStream([e.track]));
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected') peer.ok = true;
+    if (pc.connectionState === 'connected') { peer.ok = true; voice.fails[id] = 0; }
     if (pc.connectionState === 'failed' && voice.peers[id] === peer) { voiceClosePeer(id); voice.retry[id] = state.time + VOICE.RETRY; }
   };
   return peer;
@@ -185,6 +186,7 @@ function voiceClosePeer(id) {
   if (!p) return;
   delete voice.peers[id];
   if (!p.ok && p.sent) voiceDropMsg(id, p.sent);   // nespojeno: nabídku ze schránky uklidit
+  if (!p.ok && state.time - p.born > 5) voice.fails[id] = (voice.fails[id] || 0) + 1;
   try { p.pc.close(); } catch (e) { /* nevadí */ }
   if (p.el) { p.el.pause(); p.el.srcObject = null; }
   try { if (p.gain) p.gain.disconnect(); if (p.src) p.src.disconnect(); } catch (e) { /* nevadí */ }
@@ -282,10 +284,17 @@ function voicePauseItems() {
   const items = [{ id: 'voice', label: `🎤 Hlas: ${voice.on ? 'ZAP' : 'VYP'}` }];
   if (voice.on) {
     for (const o of mpHere().filter((o) => o.v).slice(0, VOICE.MAX_MUTE_ROWS)) {
-      items.push({ id: 'mute:' + o.id, label: `${voice.muted.has(o.id) ? '🔇 Ztlumený' : '🔊 Slyšíš'}: ${o.n}` });
+      items.push({ id: 'mute:' + o.id, label: `${voice.muted.has(o.id) ? '🔇 Ztlumený' : '🔊 Slyšíš'}: ${o.n}${voiceStateText(o.id)}` });
     }
   }
   return items;
+}
+// Stav spojení za jménem v ☰ – ať je vidět, proč hráče neslyším
+function voiceStateText(id) {
+  const p = voice.peers[id];
+  if (p && p.ok) return '';
+  if ((voice.fails[id] || 0) >= 2) return ' ✕ nejde spojit';
+  return ' ⏳ spojuji…';
 }
 function voicePauseAction(id) {
   if (id === 'voice') { toggleVoice(); return true; }
