@@ -229,6 +229,33 @@ function updateMultiplayer(dt) {
 }
 
 // --- Kreslení ---
+// Jak cizí hráč vypadá: vlastní skin z Lockeru, jinak Roman s barevnou vestou
+function remoteLook(o) {
+  const skin = o.s && skinById(o.s);   // 33_skiny.js
+  return skin ? skinLook(skin) : {
+    face: playerFaceImg, fallback: CONFIG.PLAYER_COLOR,
+    body: o.color, check: 'rgba(255, 255, 255, 0.12)',
+    collar: CONFIG.PLAYER_SHIRT, arms: CONFIG.PLAYER_SHIRT,
+    pants: CONFIG.PLAYER_PANTS, shoes: CONFIG.PLAYER_SHOES,
+  };
+}
+// Jméno (a co zrovna dělá) nad hlavou, nad ním smajlík
+function drawRemoteLabel(o, lx, ly) {
+  const label = voiceLabel(o.id) + (MP.ACTIVITY[o.a] ? MP.ACTIVITY[o.a] + ' ' : '') + o.n;   // 🔊 mluví / 🔇 ztlumený (34_hlas.js)
+  ctx.font = 'bold 12px sans-serif';
+  const w = Math.min(150, ctx.measureText(label).width + 12);
+  roundRectPath(lx - w / 2, ly - 9, w, 18, 9);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, lx, ly + 1, w - 8);
+  if (o.emote) drawEmoteBubble(o.emote, lx, ly - 12, state.time - o.emoteT);
+}
+// Můj smajlík nad mou hlavou (ať vidím, co jsem poslal); headY = vršek hlavy
+function drawMyEmote(cx, headY) {
+  const me = mp.emote;
+  if (me && !vrahHidden()) drawEmoteBubble(MP.EMOTES[me.i], Math.round(cx), Math.round(headY), state.time - me.t);
+}
+
 // Ostatní hráči ve stejné místnosti (renderGame, před vlastním hráčem)
 function drawRemotePlayers() {
   if (!mp.on || state.room.front) return;
@@ -237,26 +264,28 @@ function drawRemotePlayers() {
     const x = Math.round(room.x + o.dx), y = Math.round(room.y + o.dy);
     if (!inView({ x, y, w: s, h: s }, 80)) continue;   // mimo záběr (30_kvalita.js)
     drawCharacterShadow({ x, y, w: s, h: s });
-    const skin = o.s && skinById(o.s);   // vlastní skin z Lockeru, jinak Roman s barevnou vestou
-    drawFigure(x + s / 2, y + s, o.phase, o.blend, skin ? skinLook(skin) : {
-      face: playerFaceImg, fallback: CONFIG.PLAYER_COLOR,
-      body: o.color, check: 'rgba(255, 255, 255, 0.12)',
-      collar: CONFIG.PLAYER_SHIRT, arms: CONFIG.PLAYER_SHIRT,
-      pants: CONFIG.PLAYER_PANTS, shoes: CONFIG.PLAYER_SHOES,
-    });
-    // jméno (a co zrovna dělá) nad hlavou
-    const label = voiceLabel(o.id) + (MP.ACTIVITY[o.a] ? MP.ACTIVITY[o.a] + ' ' : '') + o.n;   // 🔊 mluví / 🔇 ztlumený (34_hlas.js)
-    ctx.font = 'bold 12px sans-serif';
-    const w = Math.min(150, ctx.measureText(label).width + 12), lx = x + s / 2, ly = y + s - 80;
-    roundRectPath(lx - w / 2, ly - 9, w, 18, 9);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fill();
-    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(label, lx, ly + 1, w - 8);
-    if (o.emote) drawEmoteBubble(o.emote, lx, ly - 12, state.time - o.emoteT);
+    drawFigure(x + s / 2, y + s, o.phase, o.blend, remoteLook(o));
+    drawRemoteLabel(o, x + s / 2, y + s - 80);
   }
-  // můj smajlík nad mou hlavou (ať vidím, co jsem poslal)
-  const me = mp.emote, p = state.player;
-  if (me && !vrahHidden()) drawEmoteBubble(MP.EMOTES[me.i], Math.round(p.x + p.w / 2), Math.round(p.y + p.h) - 82, state.time - me.t);
+  const p = state.player;
+  drawMyEmote(p.x + p.w / 2, p.y + p.h - 82);
+}
+
+// Ostatní hráči Před školou – pohled zepředu, stojí na chodníku jako hráč (renderFront, před hráčem)
+function drawRemotePlayersFront(room) {
+  if (!mp.on || room.shop) return;
+  const s = CONFIG.PLAYER_SIZE, sc = FRONT.SCALE, feet = Math.round(room.y + FRONT.FEET_Y);
+  for (const o of mpHere()) {
+    const cx = Math.round(room.x + o.dx + s / 2);
+    ctx.fillStyle = CONFIG.CHARACTER_SHADOW;
+    ctx.beginPath(); ctx.ellipse(cx + 3, feet, 18 * sc, 5 * sc, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    ctx.translate(cx, feet);
+    ctx.scale(sc, sc);
+    drawFigure(0, 0, o.phase, o.blend, remoteLook(o));
+    ctx.restore();
+    drawRemoteLabel(o, cx, feet - 80 * sc);
+  }
 }
 
 // Bublina se smajlíkem: vyskočí, chvíli drží a zmizí (age = kolik s je stará)

@@ -646,6 +646,7 @@ function renderFront(room) {
   drawFrontScene(room);
   const Y = (y) => room.y + y;
   const gate = room.doors[0];
+  drawRemotePlayersFront(room);   // ostatní online hráči na chodníku (29_multiplayer.js)
 
   // hráč – při vstupu do brány jde nahoru a zmenšuje se
   const p = state.player;
@@ -660,6 +661,7 @@ function renderFront(room) {
   ctx.scale(scale, scale);
   drawPlayerFigure(0, 0, p.walkPhase, p.walkBlend);
   ctx.restore();
+  if (mp.on) drawMyEmote(cx, feet - 82 * scale);   // můj smajlík (29_multiplayer.js)
   // nápověda u brány
   if (!state.frontEnter && Math.abs(cx - (gate.x + gate.w / 2)) < 50 && !state.transition) {
     const text = isTouchHint() ? 'Ťukni – vejít' : 'Šipka nahoru – vejít';
