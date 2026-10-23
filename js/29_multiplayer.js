@@ -50,6 +50,7 @@ const mp = {
   offset: null,      // čas serveru − místní čas (z vlastního záznamu, který se vrátí proudem)
   status: '',        // '' | 'connecting' | 'ok' | 'error'
   sendT: 0, beatT: 0, purgeT: 5, last: '', sending: false,
+  legacy: false,     // databáze má stará pravidla bez m / qn / qd – posílá se bez nich (od kamaráda)
   emote: null,       // můj smajlík { i, k, t } (t = kdy, herní čas)
   emoteSeq: 0,       // pořadí smajlíku – ostatní poznají nový, i když je stejný
 };
@@ -125,7 +126,8 @@ function mpSync() {
     if (typeof v.r !== 'string' || !Number.isFinite(v.x) || !Number.isFinite(v.y) || !Number.isFinite(v.t)) continue;
     const o = mp.others[id] || { dx: v.x, dy: v.y, phase: 0, blend: 0, color: mpColor(id) };
     if (o.r !== v.r) { o.dx = v.x; o.dy = v.y; }   // přešel do jiné místnosti: neklouzat přes celou mapu
-    Object.assign(o, { id, v: v.v === 1, n: cleanPlayerName(v.n) || '?', r: v.r, x: v.x, y: v.y, a: typeof v.a === 'string' ? v.a : '', s: typeof v.s === 'string' ? v.s : '', z: typeof v.z === 'string' ? v.z : '', t: v.t });
+    Object.assign(o, { id, v: v.v === 1, n: cleanPlayerName(v.n) || '?', r: v.r, x: v.x, y: v.y, a: typeof v.a === 'string' ? v.a : '', s: typeof v.s === 'string' ? v.s : '', z: typeof v.z === 'string' ? v.z : '', t: v.t,
+      m: Number.isFinite(v.m) ? v.m : 0, qn: Number.isInteger(v.qn) ? v.qn : 0, qd: typeof v.qd === 'string' && v.qd ? v.qd.split(',') : [] });
     if (Number.isInteger(v.e) && MP.EMOTES[v.e] && v.ek !== o.ek) { o.ek = v.ek; o.emote = MP.EMOTES[v.e]; o.emoteT = state.time; }   // nový smajlík
     next[id] = o;
   }
@@ -166,13 +168,23 @@ function mpMyRecord() {
   if (mySkin !== SKINS[0]) rec.s = mySkin.id;   // skin z Lockeru (33_skiny.js)
   if (voice.on) rec.v = 1;   // má zapnutý hlas (34_hlas.js)
   const z = duelZ();
-  if (z) rec.z = z;          // výzva / zápas v pingpong nebo fotbálek (35_online_hry.js)
+  if (z) rec.z = z;          // výzva / zápas v pingpongu, fotbálku nebo šachách (35_online_hry.js)
+  if (mp.legacy) return rec;
+  rec.m = state.money;       // kolik může vsadit v online zápase (35_online_hry.js)
+  if (!state.mode) {   // postup v úkolech hlavní hry – vidí ho ostatní (jmenovka, katalog; od kamaráda)
+    const quests = activeQuests();
+    rec.qn = quests.length;
+    const done = quests.filter((q) => questStage(q) === 'done').map((q) => q.id);
+    if (done.length) rec.qd = done.join(',');
+  }
   return rec;
 }
 function mpSend(rec) {
   mp.sending = true;
   fetch(mpUrl(mp.id), { method: 'PUT', body: JSON.stringify({ ...rec, t: { '.sv': 'timestamp' } }) })
     .then((r) => {
+      // databáze se starými pravidly odmítne nová pole (peníze, úkoly) – příště bez nich
+      if ((r.status === 401 || r.status === 403) && !mp.legacy && (rec.m !== undefined || rec.qn !== undefined)) { mp.legacy = true; mp.last = ''; return; }
       if (rec.z && (r.status === 401 || r.status === 403)) duelBlocked();   // databáze bez nových pravidel odmítne pole z (35_online_hry.js)
       if (!r.ok) throw new Error(r.status);
     })
@@ -241,9 +253,9 @@ function remoteLook(o) {
 }
 // Jméno (a co zrovna dělá) nad hlavou, nad ním smajlík
 function drawRemoteLabel(o, lx, ly) {
-  const label = voiceLabel(o.id) + (MP.ACTIVITY[o.a] ? MP.ACTIVITY[o.a] + ' ' : '') + o.n;   // 🔊 mluví / 🔇 ztlumený (34_hlas.js)
+  const label = voiceLabel(o.id) + (MP.ACTIVITY[o.a] ? MP.ACTIVITY[o.a] + ' ' : '') + o.n + (o.qn ? ` · ${o.qd.length}/${o.qn}` : '');   // 🔊 mluví / 🔇 ztlumený (34_hlas.js)
   ctx.font = 'bold 12px sans-serif';
-  const w = Math.min(150, ctx.measureText(label).width + 12);
+  const w = Math.min(180, ctx.measureText(label).width + 12);
   roundRectPath(lx - w / 2, ly - 9, w, 18, 9);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fill();
   ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -417,3 +429,9 @@ function drawOnlineButton() {
 }
 
 if (mp.on) mpConnect();
+
+// Kdo z ostatních online hráčů už má úkol hotový (katalog úkolů, 13_katalog.js)
+function mpQuestDoneBy(questId) {
+  if (!mp.on) return [];
+  return Object.values(mp.others).filter((o) => mpAlive(o) && o.qd.includes(questId)).map((o) => o.n);
+}

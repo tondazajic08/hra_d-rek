@@ -109,6 +109,12 @@ function drawCatalog() {
     ctx.fillStyle = L.color;
     ctx.textAlign = 'right';
     ctx.fillText(L.label.toUpperCase(), P.x + P.w - 32, y + 20);
+    const others = mpQuestDoneBy(q.id);   // online hráči, kteří to už mají (29_multiplayer.js)
+    if (others.length) {
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillStyle = '#43a047';
+      ctx.fillText(`👥 ✔ ${others.join(', ')}`, P.x + P.w - 32, y + 42, 230);
+    }
     ctx.textAlign = 'left';
     ctx.font = '14px sans-serif';
     ctx.fillStyle = '#6b5a48';
