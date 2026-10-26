@@ -31,7 +31,9 @@
 //   = { f: kdo, d: JSON { k: 'kill' | 'rep' | 'emer' | 'vote', r: kolo, … }, t };
 //   hostitel je zkontroluje, započítá do stavu a smaže. Když hostitel odejde, pokračuje další.
 //   Pozn.: role jsou v databázi čitelně – kdo by se díval do vývojářských nástrojů, uvidí je.
-// Další krok: úkoly po škole (nevinní vyhrají i splněním úkolů).
+// 4. Úkoly (37_among_ukoly.js): každý dostane na mapě N míst (testy z předmětů, rychlá matika,
+//    kabely, Bakaláři, tabule, koš). Když nevinní splní všechny úkoly, vyhráli.
+//    Animace smrti: oběť vidí útok přes celou obrazovku, ostatní padající tělo a krev.
 // =====================================================================
 const AMONG = {
   MAX: 10,                 // hráčů v jedné hře
@@ -102,7 +104,11 @@ const among = {
   es: null, esE: null,   // EventSource na stav a (hostitel) na zprávy
   inbox: [],      // zprávy pro hostitele
   startedAt: 0,   // kdy hostitel naposledy spustil kolo (ms)
+  myDone: [],     // úkoly, které jsem splnil (než to potvrdí hostitel)
+  deathAnim: null,   // { t, killer } – animace, když mě zabijí
+  slash: null,       // { x, y, t } – záblesk nože u záškodníka
 };
+state.amongTask = null;   // otevřený úkol (37_among_ukoly.js)
 state.amongPick = null;   // otevřený seznam her na úvodu { sel }
 state.amongSet = null;    // otevřené nastavení v čekárně { sel }
 const amongOn = () => state.mode === 'among';
@@ -223,7 +229,8 @@ function amongJoin(gameId) {
   state.amongPick = null;
   among.game = gameId;
   among.joined = Math.round(amongNow());
-  Object.assign(among, { phase: 'lobby', S: null, round: 0, role: '', dead: false, inbox: [], vote: null, voted: false });
+  Object.assign(among, { phase: 'lobby', S: null, round: 0, role: '', dead: false, inbox: [], vote: null, voted: false, myDone: [], deathAnim: null });
+  state.amongTask = null;
   state.mode = 'among';
   state.speedrun = null;
   state.modePick = null;
@@ -278,6 +285,7 @@ function amongToSpawn() {
     among.phase = 'lobby';
     among.S = null;
     state.amongSet = null;
+    state.amongTask = null;
     if (among.es) { among.es.close(); among.es = null; }
     if (among.esE) { among.esE.close(); among.esE = null; }
     _goToTitle();
@@ -384,6 +392,14 @@ function updateAmong(dt) {
   if (state.transition) { updateTransition(dt); return; }
   if (state.pauseMenu) { pauseMenuEvents(events); return; }
   if (state.amongSet) { amongSetEvents(events); return; }
+  if (among.killCd > 0 && among.phase === 'play') among.killCd = Math.max(0, among.killCd - dt);
+  if (among.slash) { among.slash.t += dt; if (among.slash.t > 0.6) among.slash = null; }
+  if (among.deathAnim) {   // zabili mě: animace, pak „ZABILI TĚ!“
+    among.deathAnim.t += dt;
+    if (among.deathAnim.t > 2.6) { among.deathAnim = null; among.deathT = 3; }
+    return;
+  }
+  if (state.amongTask) { amongTaskUpdate(dt, events); return; }   // otevřený úkol (37_among_ukoly.js)
   if (among.deathT > 0) among.deathT -= dt;
   if (among.phase === 'reveal') {   // obrazovka s rolí: chvíli se stojí
     among.revealT -= dt;
@@ -397,8 +413,7 @@ function updateAmong(dt) {
       if (ev.x != null && pointInRect(ev.x, ev.y, amongSetBtn(), 4)) { state.amongSet = { sel: 0 }; return; }
       if (amongIsHost() && (ev.type === 'action' || (ev.x != null && pointInRect(ev.x, ev.y, AMONG.START_BTN, 4)))) amongStartRound();
     }
-  } else {   // kolo: zabíjení, hlášení, porada
-    if (among.killCd > 0) among.killCd = Math.max(0, among.killCd - dt);
+  } else {   // kolo: zabíjení, hlášení, porada, úkoly
     for (const ev of events) {
       if (ev.x == null) continue;
       for (const k of Object.keys(AMONG.ACT)) if (pointInRect(ev.x, ev.y, AMONG.ACT[k], 4)) acts.push(k);
@@ -406,7 +421,7 @@ function updateAmong(dt) {
     for (const a of acts) {
       if (a === 'kill') amongTryKill();
       else if (a === 'report') amongTryReport();
-      else if (a === 'emer') amongTryEmergency();
+      else if (a === 'emer') { const ti = amongTaskNear(); if (ti >= 0) amongOpenTask(ti); else amongTryEmergency(); }   // E = použít úkol / porada
     }
   }
   amongMove(dt);
@@ -465,6 +480,7 @@ function amongTryKill() {
   const s = CONFIG.PLAYER_SIZE / 2;
   amongSend({ k: 'kill', v: o.id, x: Math.round(o.x + s), y: Math.round(o.y + s), rm: o.r });
   among.killCd = amongSet().kc;
+  among.slash = { x: state.room.x + o.x + s, y: state.room.y + o.y + s, t: 0 };
   const p = state.player;   // jako ve hře: záškodník skočí na místo oběti
   p.x = state.room.x + o.x; p.y = state.room.y + o.y;
   playSound([[140, 0, 0.12], [90, 0.1, 0.2]], 'sawtooth');
@@ -530,7 +546,8 @@ function amongApplyS(S) {
   const inRound = Array.isArray(S.p) && S.p.includes(mp.id);
   if (S.st === 'lobby') {
     if (among.phase !== 'lobby') {   // kolo skončilo – zpět do čekárny
-      Object.assign(among, { phase: 'lobby', role: '', dead: false, vote: null, voted: false });
+      Object.assign(among, { phase: 'lobby', role: '', dead: false, vote: null, voted: false, deathAnim: null, deathT: 0 });
+      state.amongTask = null;
       amongEnterLobby();
       mp.last = '';
     }
@@ -544,7 +561,8 @@ function amongApplyS(S) {
     among.phase = 'reveal';
     among.revealT = AMONG.REVEAL;
     among.killCd = Math.min(AMONG.FIRST_KILL, amongSet().kc);
-    state.pauseMenu = null; state.emotePick = false; state.amongSet = null;
+    among.myDone = []; among.deathAnim = null; among.deathT = 0;
+    state.pauseMenu = null; state.emotePick = false; state.amongSet = null; state.amongTask = null;
     amongToSpawn();
     mp.last = '';   // gp: 1
     playSound(among.role === 'zaskodnik' ? [[196, 0, 0.25], [147, 0.28, 0.4]] : [[523, 0, 0.1], [659, 0.12, 0.1], [784, 0.24, 0.2]]);
@@ -553,12 +571,18 @@ function amongApplyS(S) {
   // zemřel jsem (zabil mě záškodník – vyhození ukáže obrazovka vyhození)
   if (!among.dead && (S.dead || []).includes(mp.id)) {
     among.dead = true;
-    if ((S.bodies || []).some((b) => b.id === mp.id)) { among.deathT = 3.5; playSound([[110, 0, 0.3], [82, 0.3, 0.5]], 'sawtooth'); }
+    state.amongTask = null;
+    const body = (S.bodies || []).find((b) => b.id === mp.id);
+    if (body) {   // zabili mě: animace útoku
+      among.deathAnim = { t: 0, killer: body.k || '' };
+      state.pauseMenu = null; state.transition = null;
+      playSound([[110, 0, 0.3], [82, 0.3, 0.5]], 'sawtooth');
+    }
   }
   const was = prev && prev.k === S.k ? prev.st : 'play';
   if (S.st === 'meet' && was !== 'meet') {   // porada: všichni ke stolu (hlas tam funguje)
-    Object.assign(among, { phase: among.phase === 'reveal' ? 'reveal' : 'meet', vote: null, voted: false });
-    state.pauseMenu = null; state.emotePick = false;
+    Object.assign(among, { phase: among.phase === 'reveal' ? 'reveal' : 'meet', vote: null, voted: false, deathAnim: null });
+    state.pauseMenu = null; state.emotePick = false; state.amongTask = null;
     state.transition = null;
     amongToSpawn();
     playSound([[880, 0, 0.12], [660, 0.14, 0.12], [880, 0.28, 0.2]], 'square');
@@ -570,6 +594,7 @@ function amongApplyS(S) {
     amongToSpawn();
   } else if (S.st === 'end' && was !== 'end') {
     among.phase = 'end';
+    state.amongTask = null; among.deathAnim = null;
     const won = (S.win === 'imp') === (among.role === 'zaskodnik');
     playSound(won ? CONFIG.SOUND_COMPLETE : CONFIG.SOUND_MISS);
   }
@@ -604,7 +629,7 @@ function amongHostTick() {
   // kdo z kola odešel (zavřel hru), počítá se jako mrtvý (bez těla)
   if (S.st === 'play' || S.st === 'meet') {
     const g = amongMyGame(), here = new Set(g ? g.players.map((p) => p.id) : []);
-    for (const id of S.p) if (!here.has(id) && !S.dead.includes(id)) { S.dead.push(id); changed = true; }
+    for (const id of S.p) if (!here.has(id) && !S.dead.includes(id)) { S.dead.push(id); (S.gone = S.gone || []).push(id); changed = true; }   // úkoly odešlých se nepočítají
   }
   const set = Object.assign({}, AMONG_DEFAULTS, S.set);
   if (S.st === 'meet') {
@@ -627,8 +652,12 @@ function amongHostEvent(S, f, d, now) {
   const set = Object.assign({}, AMONG_DEFAULTS, S.set);
   if (d.k === 'kill' && S.st === 'play' && S.im.includes(f) && alive(f) && alive(d.v) && !S.im.includes(d.v)) {
     S.dead.push(d.v);
-    S.bodies.push({ id: d.v, r: String(d.rm || ''), x: Number(d.x) || 0, y: Number(d.y) || 0 });
+    S.bodies.push({ id: d.v, r: String(d.rm || ''), x: Number(d.x) || 0, y: Number(d.y) || 0, k: f, at: now });
     return true;
+  }
+  if (d.k === 'task' && (S.st === 'play' || S.st === 'meet') && S.p.includes(f) && !S.im.includes(f) && (S.tk[f] || []).includes(d.i)) {
+    const done = S.td[f] = S.td[f] || [];
+    if (!done.includes(d.i)) { done.push(d.i); return true; }
   }
   if (d.k === 'rep' && S.st === 'play' && alive(f) && S.bodies.some((b) => b.id === d.b)) {
     amongStartMeet(S, f, d.b, now);
@@ -665,14 +694,22 @@ function amongTally(S, now) {
 function amongCheckWin(S, now) {
   const imp = S.im.filter((id) => !S.dead.includes(id)).length;
   const crew = S.p.filter((id) => !S.im.includes(id) && !S.dead.includes(id)).length;
-  const win = imp === 0 ? 'crew' : imp >= crew ? 'imp' : '';
-  if (win) Object.assign(S, { st: 'end', win, ts: now });
+  // úkoly: všechny úkoly nevinných (i mrtvých, bez odešlých) splněné
+  let all = 0, done = 0;
+  for (const id of S.p) {
+    if (S.im.includes(id) || (S.gone || []).includes(id)) continue;
+    all += (S.tk[id] || []).length;
+    done += ((S.td && S.td[id]) || []).length;
+  }
+  const tasks = all > 0 && done >= all;
+  const win = imp === 0 || tasks ? 'crew' : imp >= crew ? 'imp' : '';
+  if (win) Object.assign(S, { st: 'end', win, how: tasks && imp > 0 ? 'tasks' : '', ts: now });
   return !!win;
 }
 // Hostitel spustí kolo: náhodně vybere záškodníky
 function amongStartRound() {
   const g = amongMyGame();
-  if (!g || !g.players[0].me || g.playing) return;
+  if (!g || !g.players[0].me || (among.S && among.S.st && among.S.st !== 'lobby')) return;   // stav hry zná hostitel sám (gp ostatních se může opozdit)
   if (performance.now() - (among.startedAt || 0) < 3000) return;   // dvojí stisk: role se nesmí rozdat dvakrát
   const n = g.players.length;
   if (n < AMONG.MIN) { state.toast = { text: `Na hru jsou potřeba aspoň ${AMONG.MIN} hráči (teď ${n})`, t: CONFIG.TOAST_TIME }; return; }
@@ -680,9 +717,14 @@ function amongStartRound() {
   for (let i = 0; i < AMONG.IMPOSTORS(n); i++) im.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
   const names = {};
   for (const p of g.players) names[p.id] = p.n;
-  const now = mpServerNow();
+  const now = mpServerNow(), set = amongSet(), stations = (amongMap().tasks || []).length, tk = {};
+  for (const id of ids) {   // každému náhodně set.tc různých míst s úkolem
+    const pool = Array.from({ length: stations }, (_, i) => i), mine = [];
+    for (let i = 0; i < Math.min(set.tc, stations); i++) mine.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    tk[id] = mine;
+  }
   among.startedAt = performance.now();
-  amongWriteS({ k: ((among.S && among.S.k) || 0) + 1, st: 'play', set: amongSet(), im, p: ids, names, dead: [], bodies: [], em: {}, lme: now, ts: now });
+  amongWriteS({ k: ((among.S && among.S.k) || 0) + 1, st: 'play', set, im, p: ids, names, dead: [], gone: [], bodies: [], em: {}, tk, td: {}, lme: now, ts: now });
 }
 // Hostitel ukončí kolo (☰) – všichni zpět do čekárny
 function amongEndRound() {
@@ -702,9 +744,9 @@ const amongRoleColor = (role) => (role === 'zaskodnik' ? '#ff4d4d' : '#4fc3f7');
 
 // --- Nastavení v čekárně (⚙) ---
 const amongSetBtn = () => (amongIsHost() ? AMONG.SET_BTN : { x: 325, y: 524, w: 150, h: 48 });
-const AMONG_SET_PANEL = { x: 140, y: 78, w: 520, h: 500 };
-const amongSetRow = (i) => ({ x: 160, y: 128 + i * 38, w: 480, h: 34 });
-const AMONG_SET_CLOSE = { x: 300, y: 522, w: 200, h: 44 };
+const AMONG_SET_PANEL = { x: 140, y: 56, w: 520, h: 536 };
+const amongSetRow = (i) => ({ x: 160, y: 100 + i * 37, w: 480, h: 33 });
+const AMONG_SET_CLOSE = { x: 300, y: 512, w: 200, h: 42 };
 function amongSetChange(i, d) {
   if (!amongIsHost() || i >= AMONG_SETTINGS.length) return;
   const def = AMONG_SETTINGS[i], set = amongSet(), vals = def.values;
@@ -743,7 +785,7 @@ function drawAmongSettings() {
   roundRectPath(P.x, P.y, P.w, P.h, 16);
   ctx.fillStyle = '#1d2333'; ctx.fill();
   ctx.strokeStyle = '#c51111'; ctx.lineWidth = 3; ctx.stroke();
-  drawOutlinedText('⚙ Nastavení hry', 400, P.y + 26, 'bold 22px sans-serif', '#ff5a4a', 'middle');
+  drawOutlinedText('⚙ Nastavení hry', 400, P.y + 24, 'bold 22px sans-serif', '#ff5a4a', 'middle');
   AMONG_SETTINGS.forEach((def, i) => {
     const r = amongSetRow(i);
     roundRectPath(r.x, r.y, r.w, r.h, 8);
@@ -765,6 +807,7 @@ function drawAmongSettings() {
 // --- Svět: těla a tlačítko porady (pod hráči) ---
 function drawAmongWorld() {
   const room = state.room, b = amongSpot(amongMap().button);
+  drawAmongStations();   // místa s úkoly (37_among_ukoly.js)
   if (b.room === room.id) {   // stojan s červeným tlačítkem
     ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
     ctx.beginPath(); ctx.ellipse(b.x + 3, b.y + 6, 26, 12, 0, 0, Math.PI * 2); ctx.fill();
@@ -780,11 +823,20 @@ function drawAmongWorld() {
   for (const body of among.S.bodies || []) {
     if (body.r !== room.id) continue;
     const x = room.x + body.x, y = room.y + body.y;
-    ctx.fillStyle = 'rgba(150, 0, 0, 0.75)';   // kaluž
-    ctx.beginPath(); ctx.ellipse(x, y + 8, 30, 12, 0, 0, Math.PI * 2); ctx.fill();
+    const age = Number.isFinite(body.at) ? Math.max(0, (mpServerNow() - body.at) / 1000) : 9;   // čerstvé tělo padá
+    const fall = Math.min(1, age / 0.45), pool = Math.min(1, age / 1.2);
+    ctx.fillStyle = 'rgba(150, 0, 0, 0.75)';   // kaluž se rozlévá
+    ctx.beginPath(); ctx.ellipse(x, y + 8, 30 * pool, 12 * pool, 0, 0, Math.PI * 2); ctx.fill();
+    if (age < 0.9) {   // stříkající krev
+      for (let k = 0; k < 10; k++) {
+        const a = k / 10 * Math.PI * 2 + body.x, r = 10 + age * 70 * (0.6 + (k % 3) * 0.2);
+        ctx.fillStyle = `rgba(190, 0, 0, ${1 - age / 0.9})`;
+        ctx.beginPath(); ctx.arc(x + Math.cos(a) * r, y - 10 + Math.sin(a) * r * 0.6 + age * age * 60, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    }
     ctx.save();
-    ctx.translate(x + 26, y + 6);
-    ctx.rotate(-Math.PI / 2);   // leží na boku
+    ctx.translate(x + 26 * fall, y + 6);
+    ctx.rotate(-Math.PI / 2 * fall);   // padá na bok
     if (body.id === mp.id) drawPlayerFigure(0, 0, 0, 0);
     else {
       const o = mp.others[body.id];
@@ -792,6 +844,52 @@ function drawAmongWorld() {
     }
     ctx.restore();
   }
+  if (among.slash) {   // záblesk nože u záškodníka
+    const k = among.slash.t / 0.6, sl = among.slash;
+    ctx.save();
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(sl.x - 20, sl.y - 30, 46, -0.9 + k, 0.6 + k); ctx.stroke();
+    ctx.restore();
+  }
+}
+// Animace, když mě zabijí: záškodník přiběhne, nůž, padám (přes celou obrazovku)
+function drawAmongDeathAnim() {
+  const A = among.deathAnim, W = CONFIG.WIDTH, H = CONFIG.HEIGHT, t = A.t;
+  ctx.fillStyle = '#1a0003';
+  ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, H);
+  const g = ctx.createRadialGradient(W / 2, 330, 40, W / 2, 330, 380);
+  g.addColorStop(0, 'rgba(160, 0, 0, 0.55)'); g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = g; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, H);
+  ctx.fillStyle = '#2b0a0d'; ctx.fillRect(-VIEW.offX, 430, W + 2 * VIEW.offX, H - 430);   // podlaha
+  const killer = mp.others[A.killer];
+  const kx = 120 + Math.min(1, t / 0.8) * 230;   // záškodník přiběhne zleva
+  ctx.save(); ctx.translate(kx, 430); ctx.scale(2.6, 2.6);
+  drawFigure(0, 0, t < 0.8 ? t * 14 : 0, t < 0.8 ? 1 : 0, killer ? remoteLook(killer) : remoteLook({ color: '#222222' }));
+  ctx.restore();
+  if (t > 0.8 && t < 1.2) {   // nůž
+    const k = (t - 0.8) / 0.4;
+    ctx.save(); ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 10; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(470, 300, 90, -1.6 + k * 2, -0.4 + k * 2); ctx.stroke();
+    ctx.restore();
+  }
+  const fall = Math.max(0, Math.min(1, (t - 1) / 0.45));   // já padám
+  ctx.save(); ctx.translate(500 + fall * 60, 430); ctx.rotate(Math.PI / 2 * fall); ctx.scale(2.6, 2.6);
+  drawPlayerFigure(0, 0, 0, 0);
+  ctx.restore();
+  if (t > 1) {   // krev
+    const a = t - 1;
+    for (let k = 0; k < 18; k++) {
+      const ang = k / 18 * Math.PI * 2, r = 20 + a * 220 * (0.5 + (k % 4) * 0.15);
+      ctx.fillStyle = `rgba(200, 0, 0, ${Math.max(0, 1 - a / 1.4)})`;
+      ctx.beginPath(); ctx.arc(510 + Math.cos(ang) * r, 330 + Math.sin(ang) * r * 0.7 + a * a * 120, 7, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(150, 0, 0, 0.8)';
+    ctx.beginPath(); ctx.ellipse(540, 440, 120 * Math.min(1, a / 1), 22 * Math.min(1, a / 1), 0, 0, Math.PI * 2); ctx.fill();
+  }
+  if (t > 0.8 && t < 0.95) { ctx.fillStyle = 'rgba(255, 255, 255, 0.35)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, H); }   // záblesk
+  if (t > 1.4) drawOutlinedText(killer ? `Zabil tě ${killer.n}` : 'Zabili tě', W / 2, 140, 'bold 34px sans-serif', '#ff4d4d', 'middle');
 }
 
 // --- Porada: úvod, diskuze, hlasování ---
@@ -899,6 +997,7 @@ function drawAmongEnd() {
   const won = imp === (among.role === 'zaskodnik');
   drawOutlinedText(won ? 'VÝHRA!' : 'PROHRA', W / 2, 190, 'bold 30px sans-serif', won ? '#ffd54a' : '#9aa6bd', 'middle');
   drawOutlinedText(imp ? 'VYHRÁLI ZÁŠKODNÍCI' : 'VYHRÁLI NEVINNÍ', W / 2, 260, 'bold 48px sans-serif', imp ? '#ff4d4d' : '#4fc3f7', 'middle');
+  if (S.how === 'tasks') drawOutlinedText('Nevinní splnili všechny úkoly!', W / 2, 296, 'bold 18px sans-serif', '#7ee08a', 'middle');
   drawOutlinedText(`${S.im.length > 1 ? 'Záškodníci byli' : 'Záškodník byl'}: ${S.im.map(amongName).join(', ')}`, W / 2, 330, 'bold 20px sans-serif', '#ffffff', 'middle');
   drawOutlinedText('Za chvíli zpět do čekárny…', W / 2, 400, '15px sans-serif', '#c9d3e8', 'middle');
 }
@@ -930,7 +1029,8 @@ function drawAmongHud() {
     const partners = among.S ? among.S.im.filter((id) => id !== mp.id).map(amongName) : [];
     task = among.dead ? 'Jsi duch – živí tě nevidí ani neslyší'
       : among.role === 'zaskodnik' ? (partners.length ? `Druhý záškodník: ${partners.join(', ')} · ` : '') + `Zabíjej nenápadně${keys ? ' (Q)' : ''}`
-      : `Najdi záškodníka · tělo nahlas${keys ? ' (R)' : ''}, porada u tlačítka${keys ? ' (E)' : ''}`;
+      : `Plň úkoly (!)${keys ? ' – E' : ''} · tělo nahlas${keys ? ' (R)' : ''} · porada u tlačítka`;
+    if (among.dead && among.role === 'nevinny') task = 'Jsi duch – můžeš dál plnit úkoly';
   } else if (host && host.me) task = n >= AMONG.MIN ? `Jsi hostitel – spusť hru (${n} hráčů, ${AMONG.IMPOSTORS(n)} ${AMONG.IMPOSTORS(n) > 1 ? 'záškodníci' : 'záškodník'})` : `Jsi hostitel – čeká se na hráče (${n}/${AMONG.MIN})`;
   else task = `Čeká se na start hry (hostitel: ${host ? host.n : '?'}) · mapa ${set.map}`;
   ctx.fillText(task, CONFIG.WIDTH / 2, CONFIG.TASK_Y, CONFIG.MUSIC_BUTTON.x - 40);
@@ -946,10 +1046,9 @@ function drawAmongHud() {
       const t = amongKillTarget(), cd = Math.ceil(among.killCd);
       drawAmongAction(AMONG.ACT.kill, '🔪', keys ? 'ZABÍT (Q)' : 'ZABÍT', !!t && cd <= 0, cd > 0 ? String(cd) : '');
     }
-    if (!among.dead) {
-      drawAmongAction(AMONG.ACT.report, '📢', keys ? 'NAHLÁSIT (R)' : 'NAHLÁSIT', !!b);
-      if (em.near) drawAmongAction(AMONG.ACT.emer, '🚨', keys ? 'PORADA (E)' : 'PORADA', em.ok, em.left <= 0 ? '✕' : em.wait > 0 ? String(em.wait) : '');
-    }
+    if (!among.dead) drawAmongAction(AMONG.ACT.report, '📢', keys ? 'NAHLÁSIT (R)' : 'NAHLÁSIT', !!b);
+    if (amongTaskNear() >= 0) drawAmongAction(AMONG.ACT.emer, '🛠', keys ? 'POUŽÍT (E)' : 'POUŽÍT', true);   // úkol (37_among_ukoly.js)
+    else if (!among.dead && em.near) drawAmongAction(AMONG.ACT.emer, '🚨', keys ? 'PORADA (E)' : 'PORADA', em.ok, em.left <= 0 ? '✕' : em.wait > 0 ? String(em.wait) : '');
   }
   // hráči vpravo pod počtem online (v kole i kdo je mrtvý – vidí jen duch)
   const H = AMONG.HUD, rowH = 20, h = 30 + players.length * rowH;
@@ -964,6 +1063,9 @@ function drawAmongHud() {
       ctx.fillText(`${i === 0 ? '👑 ' : '• '}${ghost ? '👻 ' : ''}${pl.n}${pl.me ? ' (ty)' : ''}`, H.x + 10, H.y + 34 + i * rowH, H.w - 20);
     });
   }
+  drawAmongTaskList();   // seznam úkolů vlevo (37_among_ukoly.js)
+  drawAmongTask();       // otevřený úkol
+  if (among.deathAnim) drawAmongDeathAnim();
   if (among.deathT > 0 && among.phase === 'play') {   // zabili mě
     ctx.save();
     ctx.globalAlpha = Math.min(1, among.deathT / 0.5);
@@ -994,7 +1096,7 @@ function drawAmongReveal() {
   drawOutlinedText(amongRoleName(among.role).toUpperCase(), W / 2, 260, 'bold 64px sans-serif', amongRoleColor(among.role), 'middle');
   const lines = imp
     ? ['Nenápadně zabíjej a nenech se odhalit.', partners.length ? `Druhý záškodník: ${partners.join(', ')}` : 'Jsi jediný záškodník.']
-    : ['Najdi záškodníka a vyhlasujte ho.', `Mezi vámi ${n > 1 ? `jsou ${n} záškodníci` : 'je 1 záškodník'}.`];
+    : ['Plň úkoly a najdi záškodníka.', `Mezi vámi ${n > 1 ? `jsou ${n} záškodníci` : 'je 1 záškodník'}.`];
   lines.forEach((t, i) => drawOutlinedText(t, W / 2, 340 + i * 32, 'bold 19px sans-serif', '#ffffff', 'middle'));
   drawOutlinedText(`Mapa ${amongMap().name}`, W / 2, 440, '15px sans-serif', '#c9d3e8', 'middle');
   ctx.restore();
