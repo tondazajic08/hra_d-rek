@@ -339,15 +339,7 @@ function amongBlocked() {
     if (!(amongOn() && among.dead)) { _drawPlayer(p); return; }
     ctx.save(); ctx.globalAlpha = 0.45; _drawPlayer(p); ctx.restore();
   };
-  // úvod: tlačítko Among Us pod ostatními (jen s databází pro online)
-  const _getButtons = getButtons;
-  getButtons = function () {
-    const b = _getButtons();
-    if (state.screen !== 'title' || !mpReady()) return b;
-    const bottom = b.reduce((m, x) => Math.max(m, x.rect.y + x.rect.h), 0);
-    b.push({ id: 'among', label: '👾 Among Us (online)', primary: false, rect: { x: CONFIG.WIDTH / 2 - 170, y: bottom + 12, w: 340, h: 44 } });
-    return b;
-  };
+  // úvod: Among Us je v nabídce „🎮 Módy“ (10_obrazovky.js, modesItems)
   const _pressButton = pressButton;
   pressButton = function (id) { if (id === 'among') amongOpenPick(); else _pressButton(id); };
   const _updateMenu = updateMenu;

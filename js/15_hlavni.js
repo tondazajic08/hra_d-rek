@@ -84,6 +84,7 @@ function render() {
   drawMusicMenu();     // seznam písniček (P)
   drawModePick();      // výběr režimu při nové hře (úvod i závěr)
   drawSpawnPick();     // kde začít: venku / ve skříňkách (33_skiny.js)
+  drawModesMenu();     // 🎮 Módy na úvodu (10_obrazovky.js)
   drawAmongPick();     // Among Us: seznam her (36_among.js)
   drawPauseMenu();     // Pozastaveno / Hlavní menu (31_menu.js)
   drawLeaderboard();   // okno žebříčku

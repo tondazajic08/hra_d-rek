@@ -11,6 +11,8 @@ Tento soubor je hlavně pro **Clauda v příští konverzaci**, aby věděl, co 
 
 ## Spuštění
 
+**Úvod:** jen hlavní hra (**Hrát**, nebo **Pokračovat** + **Nová hra**) a pod tím **🎮 Módy** (`modesItems`, `drawModesMenu` v `10_obrazovky.js`): 🔍 Vrah z učebny C109 (s postupem Pokračovat ve Vrahovi + Začít Vraha znovu), 👾 Among Us (online, jen s databází), 🏆 Žebříček, Zpět. Uživatel chtěl, ať na úvodu není moc tlačítek.
+
 **Mobil** (`isMobileView`: dotyková obrazovka, nebo `?mobil` v adrese pro zkoušení na počítači):
 - Svět je přiblížený `CONFIG.MOBILE_ZOOM` (1.45) a kamera jde za hráčem (`getCamera(room, zoom)`, obrazovka = (svět − cam) × zoom; ťuknutí se přepočítá zpátky).
 - Na šířku je plátno širší než 800 (`VIEW.w = 600 × poměr stran`). Svět jde přes celou šířku, rozhraní (lišta, tlačítka, dialogy, minihry, úvod) zůstává v 800 px uprostřed (`VIEW.offX`, posun je v základní transformaci; `screenToGame` vrací souřadnice rozhraní). Plátno se každý snímek celé smaže (`clearCanvas`).
@@ -606,7 +608,7 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 
 Uživatel chce Among Us jako **samostatný online režim** ve škole. Postup po krocích: **1. založení hry, seznam her a čekárna (hotové)**, **2. start hry hostitelem a tajné role (hotové)**, **3. mapy, nastavení, zabíjení, hlášení těla, porada s hlasováním a konec hry (hotové)**, **4. úkoly a animace smrti (hotové)**, **5. třídy, venty, sabotáže, barvy, převlékání v čekárně (hotové)**. Uživatel chce všechno doladit a **nahrát na GitHub až nakonec**.
 
-- **Úvod:** tlačítko „👾 Among Us (online)“ pod ostatními (jen s databází, `getButtons` obalené). Otevře seznam her (`state.amongPick`, `drawAmongPick`): řádky „Alice, Bob +1 · 3/10“ (max 5 her, plná hra šedá), „➕ Založit hru“, Zpět; šipky / Enter / Esc i ťuknutí. Bez Online ho zapne a zeptá se na jméno.
+- **Úvod:** „🎮 Módy“ → „👾 Among Us (online)“ (jen s databází, `modesItems` v `10_obrazovky.js`). Otevře seznam her (`state.amongPick`, `drawAmongPick`): řádky „Alice, Bob +1 · 3/10“ (max 5 her, plná hra šedá), „➕ Založit hru“, Zpět; šipky / Enter / Esc i ťuknutí. Bez Online ho zapne a zeptá se na jméno.
 - **Hra = skupina hráčů se stejným polem `g`** v záznamu `hraci/<id>` (`g` = id hry, `gj` = čas připojení). Jiná cesta v databázi není: seznam her se skládá ze živých záznamů ostatních (`amongGames`), takže **když všichni odejdou nebo zavřou hru, hra zmizí sama**. Na úvodu se vlastní záznam neposílá a `mp.offset` může chybět – čas serveru se pak bere z nejnovějšího záznamu ostatních (`amongNow`).
 - **Hostitel** = kdo je ve hře nejdéle (nejmenší `gj`), v seznamu hráčů 👑. Když odejde, je jím další.
 - **Čekárna** = díl `hlavni` spojené chodby (Hlavní chodba za vchodem), hráč se nedostane ven (`amongLobbyRect`, ořez polohy), dveře nefungují. **Nejsou tu učitelé** (`enterRoom` obalené: `state.teachers = []`, bez nich i v `state.solids`), **nejdou úkoly** (`activeQuests` filtruje podle `state.mode`, takže v režimu `'among'` je prázdný), ani minihry a nápovědy „mezerník“ (`updateAmong` místo `updatePlaying`, `drawTalkHint` / bubliny Terky a Michele vypnuté). Horní lišta: „👾 Among Us · čekárna“, vpravo seznam hráčů (`drawAmongHud`). Funguje ☰ (Hlavní menu = odejít ze hry), smajlíky a hlas.

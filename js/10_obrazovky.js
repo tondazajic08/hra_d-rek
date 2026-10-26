@@ -107,27 +107,17 @@ function getButtons() {
   const x = CONFIG.WIDTH / 2 - CONFIG.BUTTON_W / 2;
   const btn = (id, label, y, primary) => ({ id, label, primary, rect: { x, y, w: CONFIG.BUTTON_W, h: CONFIG.BUTTON_H } });
   if (state.screen === 'title') {
-    // na obloze nad budovou školy; s uloženým postupem dvě tlačítka vedle sebe
-    const y = TITLE_SCENE.BUTTON_Y;
-    // pod tím samostatný příběh Vrah z učebny C109 (18_vrah.js)
-    // rozehraný příběh: Pokračovat a Začít znovu vedle sebe
-    const vy = y + CONFIG.BUTTON_H + 14;
-    let vrah = [btn('vrah', '🔍 Vrah z učebny C109', vy, false)];
-    vrah[0].rect.w = 340; vrah[0].rect.x = CONFIG.WIDTH / 2 - 170; vrah[0].rect.h = 44;
-    if (state.savedVrah) {
-      vrah = [btn('vrah', '🔍 Pokračovat ve Vrahovi', vy, false), btn('vrahNew', 'Začít Vraha znovu', vy, false)];
-      vrah[0].rect = { x: CONFIG.WIDTH / 2 - 286, y: vy, w: 280, h: 44 };
-      vrah[1].rect = { x: CONFIG.WIDTH / 2 + 6, y: vy, w: 220, h: 44 };
-    }
-    // pod tím žebříček (28_speedrun.js) – jen když je nastavený Firebase
-    const lb = leaderboardReady() ? [btn('leaderboard', '🏆 Žebříček', vy + 44 + 12, false)] : [];
-    if (lb.length) { lb[0].rect = { x: CONFIG.WIDTH / 2 - 170, y: vy + 44 + 12, w: 340, h: 44 }; }
-    if (!state.savedGame) return [btn('new', 'Hrát', y, true), ...vrah, ...lb];
+    // na obloze nad budovou školy: jen hlavní hra (s uloženým postupem dvě tlačítka vedle sebe)
+    // a pod tím „🎮 Módy“ – Vrah, Among Us a žebříček jsou v nabídce módů (modesItems)
+    const y = TITLE_SCENE.BUTTON_Y, my = y + CONFIG.BUTTON_H + 14;
+    const modes = btn('modes', '🎮 Módy', my, false);
+    modes.rect = { x: CONFIG.WIDTH / 2 - 170, y: my, w: 340, h: 44 };
+    if (!state.savedGame) return [btn('new', 'Hrát', y, true), modes];
     const done = Object.values(state.savedGame.quests).filter((st) => st === 'done').length;
     const b = [btn('continue', `Pokračovat (${done}/${activeQuests(state.savedGame.story || newStory()).length})`, y, true), btn('new', 'Nová hra', y, false)];
     b[0].rect.x = CONFIG.WIDTH / 2 - CONFIG.BUTTON_W - 6;
     b[1].rect.x = CONFIG.WIDTH / 2 + 6;
-    return b.concat(vrah, lb);
+    return b.concat(modes);
   }
   if (state.screen === 'end') {   // znovu stejný režim, nebo zpátky na úvod (výběr hry / Vraha)
     const b = [btn('restart', 'Hrát znovu', 400, true), btn('title', 'Na úvod', 400, false)];
@@ -142,7 +132,60 @@ function getButtons() {
   return [];
 }
 
+// --- Nabídka „🎮 Módy“ na úvodu: Vrah z učebny C109, Among Us, žebříček ---
+state.modesMenu = null;   // otevřená nabídka { sel }
+function modesItems() {
+  const items = state.savedVrah
+    ? [{ id: 'vrah', label: '🔍 Pokračovat ve Vrahovi' }, { id: 'vrahNew', label: 'Začít Vraha znovu' }]
+    : [{ id: 'vrah', label: '🔍 Vrah z učebny C109' }];
+  if (mpReady()) items.push({ id: 'among', label: '👾 Among Us (online)' });         // 36_among.js
+  if (leaderboardReady()) items.push({ id: 'leaderboard', label: '🏆 Žebříček' });   // 28_speedrun.js
+  items.push({ id: 'back', label: 'Zpět' });
+  return items;
+}
+const MODES_PANEL = () => { const h = 96 + modesItems().length * 56; return { x: 220, y: Math.round(CONFIG.HEIGHT / 2 - h / 2), w: 360, h }; };
+const modesRow = (i) => ({ x: 240, y: MODES_PANEL().y + 70 + i * 56, w: 320, h: 46 });
+function modesEvents(events) {
+  const M = state.modesMenu, items = modesItems();
+  M.sel = Math.min(M.sel, items.length - 1);
+  for (const ev of events) {
+    let i = -1;
+    if (ev.type === 'action') i = M.sel;
+    else if (ev.x != null) {
+      i = items.findIndex((_, k) => pointInRect(ev.x, ev.y, modesRow(k), 0));
+      if (i < 0 && !pointInRect(ev.x, ev.y, MODES_PANEL(), 0)) { state.modesMenu = null; return; }   // ťuknutí mimo = zpět
+    }
+    if (i < 0) continue;
+    state.modesMenu = null;
+    if (items[i].id !== 'back') pressButton(items[i].id);
+    return;
+  }
+}
+window.addEventListener('keydown', (e) => {
+  const M = state.modesMenu;
+  if (!M || state.screen !== 'title') return;
+  const n = modesItems().length;
+  if (e.code === 'Escape') state.modesMenu = null;
+  else if (KEYMAP.up.includes(e.code)) M.sel = (M.sel + n - 1) % n;
+  else if (KEYMAP.down.includes(e.code)) M.sel = (M.sel + 1) % n;
+  else return;
+  e.stopImmediatePropagation();
+}, true);
+function drawModesMenu() {
+  const M = state.modesMenu;
+  if (!M || state.screen !== 'title') return;
+  const P = MODES_PANEL(), items = modesItems();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(-VIEW.offX, 0, CONFIG.WIDTH + 2 * VIEW.offX, CONFIG.HEIGHT);
+  roundRectPath(P.x, P.y, P.w, P.h, 16);
+  ctx.fillStyle = '#3a2616'; ctx.fill();
+  ctx.strokeStyle = '#c99a62'; ctx.lineWidth = 3; ctx.stroke();
+  drawOutlinedText('🎮 Módy', 400, P.y + 36, 'bold 26px sans-serif', '#ffd54a', 'middle');
+  items.forEach((it, i) => drawChessButton(modesRow(i), it.label, i === M.sel, it.id === 'back' ? '#5a4636' : '#2f5a7a'));
+}
+
 function pressButton(id) {
+  if (id === 'modes') { state.modesMenu = { sel: 0 }; return; }   // nabídka módů
   if (id === 'continue') pickStart(() => startPlaying(state.savedGame));   // kde začít (33_skiny.js)
   else if (id === 'vrah') { if (state.savedVrah) startPlaying(state.savedVrah, 'vrah'); else pickMode((sp) => startPlaying(null, 'vrah', sp)); }
   else if (id === 'vrahNew') pickMode((sp) => startPlaying(null, 'vrah', sp));   // Vrah od začátku (uložení se smaže)
@@ -157,6 +200,7 @@ function pressButton(id) {
 function updateMenu() {
   const events = input.events.splice(0);
   if (state.modePick) { modePickEvents(events); return; }   // výběr režimu (28_speedrun.js)
+  if (state.modesMenu) { modesEvents(events); return; }     // 🎮 Módy
   if (state.spawnPick) { spawnPickEvents(events); return; }  // kde začít (33_skiny.js)
   if (state.lb) { leaderboardEvents(events); return; }       // žebříček (28_speedrun.js)
   if (state.musicMenu) { musicMenuEvents(events); return; }   // seznam hudby přes úvod

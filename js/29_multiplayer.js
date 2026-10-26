@@ -397,7 +397,7 @@ function drawOnlineBadge() {
 }
 
 // --- Tlačítka Online a jméno na úvodu (vlevo nahoře pod hudbou) ---
-const titleControlsActive = () => state.screen === 'title' && !state.modePick && !state.amongPick && !state.spawnPick && !state.lb && !state.musicMenu;   // i Kvalita (30_kvalita.js)
+const titleControlsActive = () => state.screen === 'title' && !state.modePick && !state.modesMenu && !state.amongPick && !state.spawnPick && !state.lb && !state.musicMenu;   // i Kvalita (30_kvalita.js)
 const onlineButtonShown = () => mpReady() && titleControlsActive();
 function changePlayerName() {
   const name = cleanPlayerName(window.prompt(`Tvoje jméno (max ${SPEEDRUN.NAME_MAX} znaků – uvidí ho ostatní hráči i žebříček):`, mp.name));
