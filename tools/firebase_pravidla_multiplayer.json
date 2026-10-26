@@ -18,6 +18,8 @@
         "m": { ".validate": "newData.isNumber()" },
         "qn": { ".validate": "newData.isNumber() && newData.val() > -1 && newData.val() < 101" },
         "qd": { ".validate": "newData.isString() && newData.val().length < 601" },
+        "g": { ".validate": "newData.isString() && newData.val().length < 41" },
+        "gj": { ".validate": "newData.isNumber()" },
         "t": { ".validate": "newData.val() === now" },
         "$other": { ".validate": false }
       }

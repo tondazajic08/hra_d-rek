@@ -70,6 +70,7 @@ js/32_pingpong.js     minihra pingpong u stolů v hale s pingpongem
 js/33_skiny.js        výběr startu (venku / ve skříňkách), Locker v Dolních šatnách a výběr skinu
 js/34_hlas.js         hlasový chat (WebRTC): ve stejné místnosti, hlasitost podle vzdálenosti, mluví se při držení V / 🎤
 js/35_online_hry.js   pingpong, fotbálek a šachy proti kamarádovi online (výzva se sázkou, přijetí, síť během zápasu)
+js/36_among.js        režim Among Us: založení a seznam her, čekárna v Hlavní chodbě (zatím 1. krok)
 js/15_hlavni.js       update/render podle obrazovky, herní smyčka, START (musí být poslední)
 obrazky/              hlavy 48 × 48 px: hrac.png, mala.png, krivacek.png, rauscher.png, holub.png, soumar.png, lencova.png, vesela.png, mraz.png …
 zvuky/                hudba: pozadí/ = hudba na pozadí (CONFIG.MUSIC_PLAYLIST), „Treplev.mp3“ (v C202 u Kluse), „fotbálek.mp3“ (u fotbálku), Mykyta/ = písničky od Mykyho
@@ -596,6 +597,19 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - Kamarád (`robkojabko/darek_v2`) má ve větvi `mptest` vlastní online: `29_online.js` + `31_online_hry.js` (šachy a fotbálek proti sobě přes výzvy, přehled hráčů a jejich úkolů na klávese O, ✔ x/y nad hlavou, povinné jméno při startu hry), do své databáze `darek-30b0c` pod `mp/players`.
 - **Uživatel ho nechtěl** – multiplayer zůstává ten náš (`29_multiplayer.js`). Převzaté jsou jen novinky mimo online: `30_kvalita.js` (beze změn) a menu ☰ z jeho `29_online.js` (do `31_menu.js`, napojené na `mp.on` / `setOnline`). Při 22. 10. 2026 jeho online navíc nefungoval: pravidla jeho databáze povolovala jen n, r, x, y, c, t a odmítla zápis s q, qm, qd, qt a m.
 - Jeho kód výzev (`31_online_hry.js`, zprávy v poli `m` záznamu hráče, hostitel bílý / červení) se může hodit jako inspirace pro krok 3.
+
+## Among Us (`js/36_among.js`)
+
+Uživatel chce Among Us jako **samostatný online režim** ve škole. Postup po krocích: **1. založení hry, seznam her a čekárna (hotové)**, 2. start hry hostitelem a tajné role, 3. zabíjení, hlášení těla a porada s hlasováním, 4. úkoly po škole a konec hry.
+
+- **Úvod:** tlačítko „👾 Among Us (online)“ pod ostatními (jen s databází, `getButtons` obalené). Otevře seznam her (`state.amongPick`, `drawAmongPick`): řádky „Alice, Bob +1 · 3/10“ (max 5 her, plná hra šedá), „➕ Založit hru“, Zpět; šipky / Enter / Esc i ťuknutí. Bez Online ho zapne a zeptá se na jméno.
+- **Hra = skupina hráčů se stejným polem `g`** v záznamu `hraci/<id>` (`g` = id hry, `gj` = čas připojení). Jiná cesta v databázi není: seznam her se skládá ze živých záznamů ostatních (`amongGames`), takže **když všichni odejdou nebo zavřou hru, hra zmizí sama**. Na úvodu se vlastní záznam neposílá a `mp.offset` může chybět – čas serveru se pak bere z nejnovějšího záznamu ostatních (`amongNow`).
+- **Hostitel** = kdo je ve hře nejdéle (nejmenší `gj`), v seznamu hráčů 👑. Když odejde, je jím další.
+- **Čekárna** = díl `hlavni` spojené chodby (Hlavní chodba za vchodem), hráč se nedostane ven (`amongLobbyRect`, ořez polohy), dveře nefungují. **Nejsou tu učitelé** (`enterRoom` obalené: `state.teachers = []`, bez nich i v `state.solids`), **nejdou úkoly** (`activeQuests` filtruje podle `state.mode`, takže v režimu `'among'` je prázdný), ani minihry a nápovědy „mezerník“ (`updateAmong` místo `updatePlaying`, `drawTalkHint` / bubliny Terky a Michele vypnuté). Horní lišta: „👾 Among Us · čekárna“, vpravo seznam hráčů (`drawAmongHud`). Funguje ☰ (Hlavní menu = odejít ze hry), smajlíky a hlas.
+- **Hráči ve hře vidí jen sebe navzájem** – `mpHere` porovnává `g` (hráči ve škole mají `g` prázdné), takže ani hráči ze školy nevidí hráče v Among Us.
+- **Hlavní hra se nepřepíše:** `saveProgress` v režimu nic nedělá, `amongJoin` nevolá `startPlaying` (ten by smazal uložení), jen `resetGame` v paměti; na úvodu se uložená hra načte znovu.
+- Pravidla databáze: pole `g` (do 40 znaků) a `gj` (číslo). Když je databáze odmítne, hra se vrátí na úvod se zprávou „Among Us zatím nejde – databáze nemá nová pravidla“ (`amongBlocked`).
+- Ověřeno se 3 prohlížeči (falešná databáze, 80 ms): založení, druhý hráč hru vidí a připojí se, vidí se jen oni dva (třetí ve škole ne a naopak), bez učitelů, z čekárny se neodejde, předání hostitele, zmizení hry po odchodu všech, uložená hlavní hra beze změny.
 
 ## Pingpong (`js/32_pingpong.js`)
 

@@ -16,6 +16,7 @@ function update(dt) {
   takeEmoteTaps();         // ve hře: smajlíky (29_multiplayer.js)
   takeMuteTaps();
   takeMusicTaps();
+  if (state.screen === 'playing' && amongOn()) { updateAmong(dt); return; }   // Among Us (36_among.js)
   if (state.screen === 'playing') {
     takeCatalogTaps();
     takeInventoryTaps();
@@ -68,10 +69,10 @@ function render() {
   else if (state.screen === 'pingpong') renderPingpong();
   else if (state.screen === 'skins') renderSkins();
   else renderGame();
-  if (state.screen === 'playing') { drawCatalog(); drawMap(); drawSongMenu(); drawPrankHud(); drawVrahOverlays(); drawStoryOverlays(); drawCatalogButton(); drawMapButton(); drawInventoryButton(); }
+  if (state.screen === 'playing' && !amongOn()) { drawCatalog(); drawMap(); drawSongMenu(); drawPrankHud(); drawVrahOverlays(); drawStoryOverlays(); drawCatalogButton(); drawMapButton(); drawInventoryButton(); }
   drawMuteButton();
   drawMusicButton();   // co hraje (ve hře a na úvodu)
-  if (state.screen === 'playing') drawEnergyBar();   // hlad (17_pribehy.js)
+  if (state.screen === 'playing' && !amongOn()) drawEnergyBar();   // hlad (17_pribehy.js)
   drawSpeedrunTimer(); // časovač ve hře (jen speedrun)
   drawOnlineBadge();   // kolik hráčů je online (29_multiplayer.js)
   drawOnlineButton();  // tlačítko Online a jméno na úvodu
@@ -83,6 +84,7 @@ function render() {
   drawMusicMenu();     // seznam písniček (P)
   drawModePick();      // výběr režimu při nové hře (úvod i závěr)
   drawSpawnPick();     // kde začít: venku / ve skříňkách (33_skiny.js)
+  drawAmongPick();     // Among Us: seznam her (36_among.js)
   drawPauseMenu();     // Pozastaveno / Hlavní menu (31_menu.js)
   drawLeaderboard();   // okno žebříčku
 }
