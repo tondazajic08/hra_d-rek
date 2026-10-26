@@ -169,6 +169,7 @@ function ppShowPoint(g, winner, why) {
 function ppFinish(g) {
   g.phase = 'over';
   g.overSel = 0;
+  g.msg2 = g.online ? duelSettle(g.score.me > g.score.ai ? 'win' : 'lose') : '';   // sázka (35_online_hry.js)
   const s = `${g.score.me}:${g.score.ai}`;
   if (g.score.me > g.score.ai) {
     g.reward = g.level.reward;
@@ -487,7 +488,8 @@ function renderPingpong() {
     drawDuelPick(g, 'pp');   // výběr soupeře online (35_online_hry.js)
   } else if (g.phase === 'over') {
     drawChessBox(200, 200, 400, 250);
-    drawOutlinedText(g.msg, 400, 262, 'bold 22px sans-serif', g.reward ? '#ffd54a' : '#ffffff', 'middle');
+    drawOutlinedText(g.msg, 400, 252, 'bold 22px sans-serif', g.reward ? '#ffd54a' : '#ffffff', 'middle');
+    if (g.msg2) drawOutlinedText(g.msg2, 400, 284, 'bold 16px sans-serif', '#ffd54a', 'middle');
     chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? (g.online ? duelOverLabel(g) : 'Hrát znovu') : 'Odejít', i === g.overSel));
   } else if (g.confirmQuit) {
     drawChessBox(200, 220, 400, 170);

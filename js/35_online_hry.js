@@ -30,7 +30,8 @@ const DUEL = {
   MAX_LAG: 0.3,        // s – nejvíc o tolik se míček po předání „dožene“
   ACCEPT_KEYS: ['KeyJ'],
   DECLINE_KEYS: ['KeyX'],
-  GAMES: { pp: { name: 'pingpong', icon: '🏓' }, foos: { name: 'fotbálek', icon: '⚽' } },
+  GAMES: { pp: { name: 'pingpong', icon: '🏓' }, foos: { name: 'fotbálek', icon: '⚽' }, chess: { name: 'šachy', icon: '♟' } },
+  BETS: [0, 10, 25, 50, 100],   // sázka: oba zaplatí na začátku, vítěz bere obě, remíza = zpět (nápad od kamaráda)
   ROW: { id: 'online', name: '👥 Online – vyzvat hráče', reward: 0 },   // řádek v menu obou miniher
   INVITE: { x: 170, y: 92, w: 460, h: 118 },   // okno s výzvou nahoře
 };
@@ -43,13 +44,35 @@ const duel = {
   note: '', noteT: 0,   // zpráva do menu („Bob neodpovídá“)
   match: null,     // běžící zápas
   blocked: false,  // databáze odmítla výzvu (chybí nová pravidla) – zápasy nejdou, ať hráč nezmizí ostatním
+  bet: 0,          // vybraná sázka při výzvě (index do DUEL.BETS)
 };
-const duelZ = () => (duel.out && !duel.blocked ? [duel.out.to, duel.out.g, duel.out.m, duel.out.st].join('|') : '');
+const duelZ = () => (duel.out && !duel.blocked ? [duel.out.to, duel.out.g, duel.out.m, duel.out.st, duel.out.bet || 0].join('|') : '');
 function duelParse(z) {
   if (typeof z !== 'string') return null;
-  const [to, g, m, st] = z.split('|');
-  return DUEL.GAMES[g] && to && m ? { to, g, m, st } : null;
+  const [to, g, m, st, bet] = z.split('|');
+  const b = Number(bet);
+  return DUEL.GAMES[g] && to && m ? { to, g, m, st, bet: DUEL.BETS.includes(b) ? b : 0 } : null;
 }
+
+// --- Sázka: oba zaplatí na začátku každé hry, vítěz bere obě, remíza = zpět, kdo uteče, prohrál ---
+function duelPay() {
+  const M = duel.match;
+  if (!M || !M.bet || M.paid) return;
+  state.money -= M.bet;
+  M.paid = true;
+  saveProgress();
+}
+// result = 'win' | 'lose' | 'draw' → text do zprávy na konci
+function duelSettle(result) {
+  const M = duel.match;
+  if (!M || !M.paid) return '';
+  M.paid = false;
+  if (result === 'win') state.money += 2 * M.bet;
+  if (result === 'draw') state.money += M.bet;
+  saveProgress();
+  return result === 'win' ? `💰 Bereš ${2 * M.bet} Kč` : result === 'draw' ? 'Sázka se vrací' : `Přišel jsi o ${M.bet} Kč`;
+}
+const duelBetText = (bet) => (bet ? `o ${bet} Kč` : 'bez sázky');
 const duelUrl = (sub) => `${MP.DB_URL.replace(/\/+$/, '')}/${DUEL.PATH}${sub ? '/' + sub : ''}.json`;
 const duelOppName = () => (duel.match ? duel.match.oppName : 'Soupeř');
 function mpKick() { mp.sendT = 0; mp.last = ''; }   // záznam hráče poslat hned
@@ -78,10 +101,13 @@ function duelOpenPick(gs) {
   gs.pickSel = 0;
   duel.note = '';
 }
+const duelBetNow = () => Math.min(DUEL.BETS[duel.bet] || 0, Math.max(0, state.money));
+const duelCanAfford = (o, bet) => !bet || (mp.legacy ? false : o.m >= bet);   // má soupeř na sázku? (pole m v jeho záznamu)
 function duelAsk(g, o) {
   const m = mp.id.slice(0, 6) + Date.now().toString(36);
-  duel.ask = { to: o.id, name: o.n, g, m, t: performance.now() };
-  duel.out = { to: o.id, g, m, st: 'ch' };
+  const bet = DUEL.BETS[duel.bet] || 0;
+  duel.ask = { to: o.id, name: o.n, g, m, bet, t: performance.now() };
+  duel.out = { to: o.id, g, m, st: 'ch', bet };
   mpKick();
   playSound([[660, 0, 0.05], [880, 0.06, 0.06]]);
 }
@@ -97,10 +123,11 @@ function duelAskDone(text) {
 function duelAccept() {
   const inv = duel.invite;
   if (!inv) return;
+  if (state.money < inv.bet) { playSound([[220, 0, 0.12]]); return; }   // nemám na sázku – jde jen odmítnout
   duel.invite = null;
   duel.seen[inv.m] = true;
   state.emotePick = false;
-  duelStart(inv.g, inv.m, inv.from, inv.name, false);
+  duelStart(inv.g, inv.m, inv.from, inv.name, false, inv.bet);
 }
 function duelDecline() {
   const inv = duel.invite;
@@ -113,14 +140,14 @@ function duelDecline() {
 }
 
 // --- Zápas: začátek, konec, posílání stavu ---
-function duelStart(g, m, opp, oppName, host) {
+function duelStart(g, m, opp, oppName, host, bet) {
   if (duel.match) duelEnd('');
   duel.ask = null;
-  duel.out = { to: opp, g, m, st: 'ok' };
+  duel.out = { to: opp, g, m, st: 'ok', bet };
   mpKick();
   const now = performance.now();
   const M = duel.match = {
-    g, m, opp, oppName, host, role: host ? 'h' : 'g', raw: {}, es: null, snap: null, snapD: '',
+    g, m, opp, oppName, host, bet: bet || 0, paid: false, role: host ? 'h' : 'g', raw: {}, es: null, snap: null, snapD: '',
     sendT: 0, beatT: 0, sending: false, lastKey: '', gotT: now, startT: now,
   };
   if (typeof EventSource !== 'undefined') {
@@ -145,7 +172,20 @@ function duelStart(g, m, opp, oppName, host) {
   }
   duelPurge();
   playSound([[523, 0, 0.06], [659, 0.07, 0.06], [784, 0.14, 0.1]]);
-  if (g === 'pp') ppStartOnline(); else foosStartOnline();
+  if (g === 'pp') ppStartOnline(); else if (g === 'foos') foosStartOnline(); else chessStartOnline();
+  duelPay();
+}
+const duelGameState = (g) => (g === 'pp' ? state.pp : g === 'foos' ? state.foos : state.chess);
+// Přejít do obrazovky dané hry (z jiné minihry nejdřív odejít)
+function duelOpenScreen(g) {
+  const screen = { pp: 'pingpong', foos: 'foosball', chess: 'chess' }[g];
+  if (state.screen !== screen) {
+    if (state.screen === 'pingpong') ppLeave();
+    else if (state.screen === 'foosball') foosLeave();
+    else if (state.screen === 'chess') chessLeave();
+  }
+  if (state.screen !== screen || !duelGameState(g)) ({ pp: openPingpong, foos: openFoosball, chess: openChess })[g]();
+  return duelGameState(g);
 }
 function duelSetAt(root, parts, value) {
   if (!parts.length) return value && typeof value === 'object' ? value : {};
@@ -166,19 +206,24 @@ function duelEnd(reason) {
   if (M.es) M.es.close();
   try { fetch(duelUrl(`${M.m}/${mp.id}`), { method: 'DELETE', keepalive: true }).catch(() => {}); } catch (e) { /* nevadí */ }
   if (duel.out && duel.out.m === M.m) { duel.out = null; mpKick(); }
-  const gs = M.g === 'pp' ? state.pp : state.foos;
-  if (gs && gs.online && reason) duelShowEnd(gs, reason);
+  const gs = duelGameState(M.g);
+  // soupeř utekl uprostřed hry = prohrál, sázku beru já (u sebe ji odečte duelQuit)
+  let won = '';
+  if (M.paid) { duel.match = M; won = duelSettle('win'); duel.match = null; }
+  if (gs && gs.online && reason) { duelShowEnd(gs, reason); gs.msg2 = won; }
 }
 function duelShowEnd(gs, reason) {
   gs.phase = 'over';
   gs.overSel = 0;
   gs.msg = reason;
+  gs.msg2 = '';
   gs.netEnd = true;
   gs.confirmQuit = false;
   if (gs.fingers) gs.fingers = {};
 }
 // Hráč zápas ukončil sám (✕ / Esc → Ano, Odejít)
 function duelQuit(gs) {
+  if (duel.match && duel.match.paid) duel.match.paid = false;   // odchod uprostřed hry = sázka propadá
   duelEnd('');
   gs.online = false;
   gs.netEnd = false;
@@ -186,6 +231,7 @@ function duelQuit(gs) {
 // Po konci: „Odveta“ (oba musí chtít), nebo zpět do menu, když soupeř odešel
 function duelOverAgain(gs) {
   if (gs.netEnd || !duel.match) { duelQuit(gs); gs.phase = 'menu'; return; }
+  if (state.money < duel.match.bet) { playSound([[220, 0, 0.12]]); return; }   // na další sázku nemám
   gs.rematch = true;
 }
 window.addEventListener('pagehide', () => duelEnd(''));
@@ -206,7 +252,7 @@ function duelPurge() {
 function updateDuel(dt) {
   const now = performance.now();
   if (!mp.on) {
-    if (duel.match) duelEnd('Online je vypnutý');
+    if (duel.match) { duel.match.paid = false; duelEnd('Online je vypnutý'); }
     duel.ask = null; duel.invite = null; duel.out = null;
     return;
   }
@@ -216,7 +262,7 @@ function updateDuel(dt) {
   if (!duel.match && !duel.ask) {
     for (const o of Object.values(mp.others)) {
       const z = mpAlive(o) ? duelParse(o.z) : null;
-      if (z && z.to === mp.id && z.st === 'ch' && !duel.seen[z.m]) { inv = { from: o.id, name: o.n, g: z.g, m: z.m }; break; }
+      if (z && z.to === mp.id && z.st === 'ch' && !duel.seen[z.m]) { inv = { from: o.id, name: o.n, g: z.g, m: z.m, bet: z.bet }; break; }
     }
   }
   if (inv && (!duel.invite || duel.invite.m !== inv.m)) playSound([[784, 0, 0.06], [988, 0.08, 0.06], [1175, 0.16, 0.09]]);
@@ -225,9 +271,9 @@ function updateDuel(dt) {
   const a = duel.ask;
   if (a) {
     const o = mp.others[a.to], z = o && mpAlive(o) ? duelParse(o.z) : null, forMe = z && z.to === mp.id;
-    if (forMe && z.m === a.m && z.st === 'ok') duelStart(a.g, a.m, a.to, o.n, true);
+    if (forMe && z.m === a.m && z.st === 'ok') duelStart(a.g, a.m, a.to, o.n, true, a.bet);
     else if (forMe && z.m === a.m && z.st === 'no') duelAskDone(`${a.name} teď nechce hrát`);
-    else if (forMe && z.st === 'ch' && z.g === a.g && mp.id > a.to) { duel.seen[z.m] = true; duelStart(z.g, z.m, a.to, o.n, false); }   // vyzvali jsme se navzájem
+    else if (forMe && z.st === 'ch' && z.g === a.g && z.bet === a.bet && mp.id > a.to) { duel.seen[z.m] = true; duelStart(z.g, z.m, a.to, o.n, false, z.bet); }   // vyzvali jsme se navzájem
     else if (!o || !mpAlive(o)) duelAskDone(`${a.name} už není online`);
     else if (now - a.t > DUEL.ASK_TIME) duelAskDone(`${a.name} neodpovídá`);
   }
@@ -241,9 +287,9 @@ function updateDuel(dt) {
   M.sendT -= dt;
   M.beatT -= dt;
   if (M.sending || M.sendT > 0) return;
-  const gs = M.g === 'pp' ? state.pp : state.foos;
+  const gs = duelGameState(M.g);
   if (!gs || !gs.online) return;
-  const d = JSON.stringify(M.g === 'pp' ? ppOnlineOut(gs) : foosOnlineOut(gs));
+  const d = JSON.stringify(M.g === 'pp' ? ppOnlineOut(gs) : M.g === 'foos' ? foosOnlineOut(gs) : chessOnlineOut(gs));
   if (d === M.lastKey && M.beatT > 0) return;
   M.sending = true;
   M.sendT = DUEL.SEND_EVERY;
@@ -262,11 +308,11 @@ function duelPoll(gs) {
   if (M.snap) {
     const s = M.snap;
     M.snap = null;
-    if (M.g === 'pp') ppOnlineTake(gs, s); else foosOnlineTake(gs, s);
+    if (M.g === 'pp') ppOnlineTake(gs, s); else if (M.g === 'foos') foosOnlineTake(gs, s); else chessOnlineTake(gs, s);
   }
   // odveta: chtějí oba → hostitel začne novou hru
   if (M.host && gs.phase === 'over' && !gs.netEnd && gs.rematch && gs.oppRematch) {
-    if (M.g === 'pp') ppOnlineRestart(gs); else foosOnlineRestart(gs);
+    if (M.g === 'pp') ppOnlineRestart(gs); else if (M.g === 'foos') foosOnlineRestart(gs); else chessOnlineRestart(gs);
   }
 }
 
@@ -293,9 +339,7 @@ function duelEvent(gs, ev, sc, sv) {
 const PP_CX = PP.TABLE.x + PP.TABLE.w / 2;
 function ppStartOnline() {
   const M = duel.match;
-  if (state.screen === 'foosball') foosLeave();
-  if (state.screen !== 'pingpong' || !state.pp) openPingpong();
-  const g = state.pp;
+  const g = duelOpenScreen('pp');
   g.online = true;
   ppNewGame({ id: 'online', name: `Online: ${M.oppName}`, reward: 0 });
   Object.assign(g, { seq: 0, myEv: null, netEnd: false, rematch: false, oppRematch: false, oppTarget: null });
@@ -364,6 +408,7 @@ function ppOnlineOpp(g, dt) {   // soupeřovo pádlo plynule dojede na poslední
 function ppOnlineReset(g) {
   Object.assign(g, { score: { me: 0, ai: 0 }, phase: 'play', rematch: false, oppRematch: false, msg: '', texts: [], confirmQuit: false });
   ppServe(g);
+  duelPay();   // odveta: nová sázka
 }
 function ppOnlineRestart(g) {
   g.score = { me: 0, ai: 0 };
@@ -379,9 +424,7 @@ function ppOnlineRestart(g) {
 const FOOS_CX = FOOS.FIELD.x + FOOS.FIELD.w / 2, FOOS_CY = FOOS.FIELD.y + FOOS.FIELD.h / 2;
 function foosStartOnline() {
   const M = duel.match;
-  if (state.screen === 'pingpong') ppLeave();
-  if (state.screen !== 'foosball' || !state.foos) openFoosball();
-  const f = state.foos;
+  const f = duelOpenScreen('foos');
   f.online = true;
   foosNewGame({ id: 'online', name: `Online: ${M.oppName}`, reward: 0 });
   Object.assign(f, { seq: 0, myEv: null, netEnd: false, rematch: false, oppRematch: false, oppP: 0, oppKick: 0, ballBt: 0 });
@@ -455,6 +498,7 @@ function foosOnlineOpp(f, dt) { f.p.blue += (f.oppP - f.p.blue) * (1 - Math.exp(
 function foosOnlineReset(f) {
   Object.assign(f, { score: { red: 0, blue: 0 }, phase: 'play', rematch: false, oppRematch: false, msg: '', confirmQuit: false });
   foosServe(f, Math.random() < 0.5 ? 'red' : 'blue');
+  duelPay();   // odveta: nová sázka
 }
 function foosOnlineRestart(f) {
   f.score = { red: 0, blue: 0 };
@@ -464,13 +508,94 @@ function foosOnlineRestart(f) {
 }
 
 // =====================================================================
+// ŠACHY ONLINE – každý posílá celý seznam tahů partie (mv: 3 znaky na tah –
+// odkud, kam, proměna) a číslo partie (n). Kdo je na tahu, připíše svůj tah,
+// druhý si nové tahy přehraje (jen platné). V první partii je vyzyvatel bílý,
+// při odvetě se barvy prohodí. Kdo je černý, má šachovnici otočenou (je dole).
+// =====================================================================
+const chessSqChar = (sq) => String.fromCharCode(48 + sq);   // pole 0–63 → znak '0'…'o'
+const chessMoveCode = (m) => chessSqChar(m.from) + chessSqChar(m.to) + (m.promo || '.');
+function chessStartOnline() {
+  const c = duelOpenScreen('chess');
+  c.online = true;
+  Object.assign(c, { gameN: 0, netEnd: false, rematch: false, oppRematch: false });
+  chessOnlineNew(c, 0);
+}
+function chessOnlineNew(c, n) {
+  const M = duel.match;
+  chessNewGame({ id: 'online', name: `Online: ${M.oppName}`, reward: 0 });
+  c.gameN = n;
+  c.myColor = (M.host === (n % 2 === 0)) ? 'w' : 'b';
+  c.flip = c.myColor === 'b';
+  c.cursor = c.myColor === 'w' ? 52 : 12;
+  c.moves = '';
+  c.resigned = false;
+  Object.assign(c, { rematch: false, oppRematch: false });
+}
+function chessOnlineOut(c) {
+  const out = { n: c.gameN, mv: c.moves };
+  if (c.resigned) out.rs = 1;
+  if (c.rematch) out.rm = 1;
+  return out;
+}
+// Můj tah (chessApply) – připsat do seznamu a poslat hned
+function chessOnlineMoved(c, m) {
+  c.moves += chessMoveCode(m);
+  if (duel.match) duel.match.sendT = 0;
+}
+function chessOnlineTake(c, s) {
+  if (!Number.isInteger(s.n)) return;
+  c.oppRematch = s.rm === 1 && s.n === c.gameN;
+  if (s.n > c.gameN) { chessOnlineNew(c, s.n); duelPay(); }   // hostitel začal odvetu
+  if (s.n !== c.gameN || typeof s.mv !== 'string') return;
+  // nové tahy soupeře (seznam musí začínat stejně jako můj)
+  if (c.phase === 'play' && s.mv.length > c.moves.length && s.mv.startsWith(c.moves)) {
+    const add = s.mv.slice(c.moves.length);
+    for (let i = 0; i + 3 <= add.length && c.phase === 'play'; i += 3) {
+      if (c.pos.turn === c.myColor) break;   // můj tah už nepřijímám
+      const from = add.charCodeAt(i) - 48, to = add.charCodeAt(i + 1) - 48, promo = add[i + 2] === '.' ? undefined : add[i + 2];
+      const m = c.legal.find((x) => x.from === from && x.to === to && x.promo === promo);
+      if (!m) break;   // neplatný tah (rozjeté partie) – ignorovat
+      c.moves += add.slice(i, i + 3);
+      c.promo = null;
+      chessApply(c, m, true);
+    }
+  }
+  if (s.rs === 1 && c.phase === 'play') { c.resignBy = c.myColor === 'w' ? 'b' : 'w'; chessFinish(c, 'resign'); }   // soupeř se vzdal
+}
+function chessOnlineRestart(c) {
+  chessOnlineNew(c, c.gameN + 1);
+  duelPay();
+  if (duel.match) duel.match.sendT = 0;
+}
+// Konec partie online: text z mého pohledu + sázka
+function chessOnlineResult(c, how, winner) {
+  const opp = duelOppName();
+  if (!winner) return duelSettle('draw');
+  const won = winner === c.myColor;
+  c.msg = how === 'resign' ? (won ? `${opp} se vzdal – vyhrál jsi!` : 'Vzdal ses')
+    : won ? `Mat! Vyhrál jsi proti ${opp}` : `Mat! Vyhrál ${opp}`;
+  playSound(won ? CONFIG.SOUND_COMPLETE : CONFIG.SOUND_MISS);
+  return duelSettle(won ? 'win' : 'lose');
+}
+
+// =====================================================================
 // OBRAZOVKY: výběr soupeře, čekání na odpověď, okno s výzvou
 // =====================================================================
-const duelPickRow = (i) => ({ x: 230, y: 200 + i * 54, w: 340, h: 44 });
-const DUEL_BACK = { x: 230, y: 432, w: 340, h: 44 };
+const duelPickRow = (i) => ({ x: 230, y: 240 + i * 48, w: 340, h: 42 });
+const DUEL_BACK = { x: 230, y: 440, w: 340, h: 44 };
 const DUEL_CANCEL = { x: 280, y: 400, w: 240, h: 48 };
+const DUEL_BET_LEFT = { x: 230, y: 186, w: 54, h: 40 }, DUEL_BET_RIGHT = { x: 516, y: 186, w: 54, h: 40 };
+// Další / předchozí sázka, na kterou mám peníze
+function duelBetStep(d) {
+  const n = DUEL.BETS.length;
+  for (let k = 1; k <= n; k++) {
+    const i = (duel.bet + d * k + n * k) % n;
+    if (DUEL.BETS[i] <= state.money) { duel.bet = i; playSound([[700, 0, 0.03]]); return; }
+  }
+}
 
-// Fáze 'pick' (výběr hráče) a 'wait' (čekám na odpověď) v menu pingpongu / fotbálku
+// Fáze 'pick' (výběr hráče a sázky) a 'wait' (čekám na odpověď) v menu pingpongu / fotbálku / šachů
 function duelPickUpdate(gs, g, events, keys) {
   const has = (list, k) => KEYMAP[list].includes(k);
   if (gs.phase === 'wait') {
@@ -479,18 +604,25 @@ function duelPickUpdate(gs, g, events, keys) {
     if (cancel) { duelCancelAsk(); gs.phase = 'menu'; }
     return;
   }
+  if (DUEL.BETS[duel.bet] > state.money) duel.bet = 0;
+  const bet = DUEL.BETS[duel.bet];
   const list = duelCandidates(), n = list.length + 1;
   gs.pickSel = Math.min(gs.pickSel, n - 1);
   for (const k of keys) {
     if (has('up', k)) gs.pickSel = (gs.pickSel + n - 1) % n;
     if (has('down', k)) gs.pickSel = (gs.pickSel + 1) % n;
+    if (has('left', k)) duelBetStep(-1);
+    if (has('right', k)) duelBetStep(1);
     if (k === 'Escape') { gs.phase = 'menu'; return; }
   }
   for (const ev of events) {
+    if (chessHit([DUEL_BET_LEFT], ev) === 0) { duelBetStep(-1); continue; }
+    if (chessHit([DUEL_BET_RIGHT], ev) === 0) { duelBetStep(1); continue; }
     let i = ev.type === 'action' ? gs.pickSel : chessHit(list.map((_, k) => duelPickRow(k)), ev);
     if (ev.type !== 'action' && i < 0 && chessHit([DUEL_BACK], ev) === 0) i = list.length;
     if (i < 0) continue;
     if (i >= list.length) { gs.phase = 'menu'; return; }
+    if (!duelCanAfford(list[i], bet)) { playSound([[220, 0, 0.12]]); continue; }   // soupeř nemá na sázku
     duelAsk(g, list[i]);
     gs.phase = 'wait';
     return;
@@ -503,22 +635,34 @@ function drawDuelPick(gs, g) {
     const a = duel.ask;
     drawOutlinedText(`${G.icon} Výzva odeslána`, 400, 160, 'bold 24px sans-serif', '#ffd54a', 'middle');
     if (a) {
-      drawOutlinedText(`Čekám, jestli ${a.name} přijme…`, 400, 240, 'bold 19px sans-serif', '#ffffff', 'middle');
+      drawOutlinedText(`Čekám, jestli ${a.name} přijme…`, 400, 230, 'bold 19px sans-serif', '#ffffff', 'middle');
+      drawOutlinedText(a.bet ? `Sázka ${a.bet} Kč` : 'Bez sázky', 400, 262, 'bold 15px sans-serif', '#ffd54a', 'middle');
       const left = Math.max(0, Math.ceil((DUEL.ASK_TIME - (performance.now() - a.t)) / 1000));
-      drawOutlinedText(`ještě ${left} s`, 400, 280, 'bold 15px sans-serif', '#e8d3a8', 'middle');
-      drawOutlinedText('Výzva mu vyskočí nahoře na obrazovce.', 400, 330, '14px sans-serif', '#e8d3a8', 'middle');
+      drawOutlinedText(`ještě ${left} s`, 400, 292, 'bold 15px sans-serif', '#e8d3a8', 'middle');
+      drawOutlinedText('Výzva mu vyskočí nahoře na obrazovce.', 400, 340, '14px sans-serif', '#e8d3a8', 'middle');
     }
     drawChessButton(DUEL_CANCEL, 'Zrušit', true, '#5a4636');
     return;
   }
-  drawOutlinedText(`${G.icon} Online – koho vyzveš?`, 400, 160, 'bold 24px sans-serif', '#ffd54a', 'middle');
+  drawOutlinedText(`${G.icon} Online – koho vyzveš?`, 400, 156, 'bold 24px sans-serif', '#ffd54a', 'middle');
+  // sázka ◀ 25 Kč ▶
+  const bet = DUEL.BETS[duel.bet] <= state.money ? DUEL.BETS[duel.bet] : 0;
+  roundRectPath(230, 186, 340, 40, 10);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; ctx.fill();
+  drawChessButton(DUEL_BET_LEFT, '◀', false, '#5a4636');
+  drawChessButton(DUEL_BET_RIGHT, '▶', false, '#5a4636');
+  drawOutlinedText(bet ? `Sázka: ${bet} Kč` : 'Sázka: žádná', 400, 207, 'bold 17px sans-serif', bet ? '#ffd54a' : '#ffffff', 'middle');
   const list = duelCandidates();
   if (!list.length) {
     const lines = mp.status !== 'ok' ? ['Připojuji se…'] : ['Nikdo další tu není.', 'Kamarád musí mít zapnutý Online', 'a stát ve stejné části školy jako ty.'];
-    lines.forEach((t, i) => drawOutlinedText(t, 400, 240 + i * 30, 'bold 16px sans-serif', i ? '#e8d3a8' : '#ffffff', 'middle'));
+    lines.forEach((t, i) => drawOutlinedText(t, 400, 270 + i * 30, 'bold 16px sans-serif', i ? '#e8d3a8' : '#ffffff', 'middle'));
   }
-  list.forEach((o, i) => drawChessButton(duelPickRow(i), `${G.icon} ${o.n}`, i === gs.pickSel, '#2f5a7a'));
+  list.forEach((o, i) => {
+    const ok = duelCanAfford(o, bet);
+    drawChessButton(duelPickRow(i), ok ? `${G.icon} ${o.n}` : `${o.n} – nemá na sázku`, i === gs.pickSel && ok, ok ? '#2f5a7a' : '#4a4a4a');
+  });
   drawChessButton(DUEL_BACK, 'Zpět', gs.pickSel === list.length, '#5a4636');
+  if (!isTouchHint()) drawOutlinedText('← → sázka · ↑ ↓ hráč · mezerník = vyzvat', 400, 492, '12px sans-serif', '#e8d3a8', 'middle');
 }
 // Zpráva v menu („Bob neodpovídá“)
 function drawDuelNote(y) {
@@ -533,12 +677,12 @@ function duelInviteShown() {
   if (!duel.invite) return false;
   const s = state.screen;
   if (s === 'playing') return !state.transition && !state.pauseMenu && !state.dialog && !state.scene;
-  const gs = s === 'pingpong' ? state.pp : s === 'foosball' ? state.foos : null;
+  const gs = s === 'pingpong' ? state.pp : s === 'foosball' ? state.foos : s === 'chess' ? state.chess : null;
   return !!gs && !gs.online && ['menu', 'over', 'pick'].includes(gs.phase);
 }
 const duelInviteButtons = () => {
   const I = DUEL.INVITE;
-  return [{ x: I.x + 20, y: I.y + 58, w: 200, h: 44 }, { x: I.x + I.w - 220, y: I.y + 58, w: 200, h: 44 }];
+  return [{ x: I.x + 20, y: I.y + 64, w: 200, h: 42 }, { x: I.x + I.w - 220, y: I.y + 64, w: 200, h: 42 }];
 };
 function takeDuelTaps() {
   if (!duelInviteShown()) return;
@@ -562,8 +706,11 @@ function drawDuelInvite() {
   roundRectPath(I.x, I.y, I.w, I.h, 14);
   ctx.fillStyle = 'rgba(42, 28, 16, 0.95)'; ctx.fill();
   ctx.strokeStyle = `rgba(255, 213, 74, ${glow})`; ctx.lineWidth = 3; ctx.stroke();
-  drawOutlinedText(`${G.icon} ${inv.name} tě vyzývá na ${G.name}!`, I.x + I.w / 2, I.y + 30, 'bold 19px sans-serif', '#ffd54a', 'middle');
+  drawOutlinedText(`${G.icon} ${inv.name} tě vyzývá na ${G.name}!`, I.x + I.w / 2, I.y + 24, 'bold 19px sans-serif', '#ffd54a', 'middle');
+  const poor = state.money < inv.bet;
+  drawOutlinedText(inv.bet ? `Sázka ${inv.bet} Kč (máš ${state.money} Kč)` : 'Bez sázky', I.x + I.w / 2, I.y + 48, 'bold 14px sans-serif', poor ? '#ff8a80' : '#ffffff', 'middle');
   const [yes, no] = duelInviteButtons(), keys = !isTouchHint();
-  drawChessButton(yes, keys ? '✓ Přijmout (J)' : '✓ Přijmout', false, '#2e7d32');
+  if (poor) drawChessButton(yes, 'Nemáš dost peněz', false, '#4a4a4a');
+  else drawChessButton(yes, keys ? '✓ Přijmout (J)' : '✓ Přijmout', false, '#2e7d32');
   drawChessButton(no, keys ? '✕ Odmítnout (X)' : '✕ Odmítnout', false, '#7a2a20');
 }

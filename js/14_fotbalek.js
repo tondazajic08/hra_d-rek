@@ -121,6 +121,7 @@ function foosShowGoal(f, team) {
 function foosFinish(f, winner) {
   f.phase = 'over';
   f.overSel = 0;
+  f.msg2 = f.online ? duelSettle(winner === 'red' ? 'win' : 'lose') : '';   // sázka (35_online_hry.js)
   const s = `${f.score.red}:${f.score.blue}`;
   if (f.level.id === 'two') {
     f.msg = `${FOOS.TEAMS[winner].name} vyhráli ${s}`;
@@ -484,7 +485,8 @@ function renderFoosball() {
     drawDuelPick(f, 'foos');   // výběr soupeře online (35_online_hry.js)
   } else if (f.phase === 'over') {
     drawChessBox(200, 200, 400, 250);
-    drawOutlinedText(f.msg, 400, 262, 'bold 22px sans-serif', f.reward || f.level.id === 'two' ? '#ffd54a' : '#ffffff', 'middle');
+    drawOutlinedText(f.msg, 400, 252, 'bold 22px sans-serif', f.reward || f.level.id === 'two' ? '#ffd54a' : '#ffffff', 'middle');
+    if (f.msg2) drawOutlinedText(f.msg2, 400, 284, 'bold 16px sans-serif', '#ffd54a', 'middle');
     chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? (f.online ? duelOverLabel(f) : 'Hrát znovu') : 'Odejít', i === f.overSel));
   } else if (f.confirmQuit) {
     drawChessBox(200, 220, 400, 170);

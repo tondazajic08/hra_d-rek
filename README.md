@@ -69,7 +69,7 @@ js/31_menu.js         ☰ Hlavní menu / Pozastaveno ve hře (od kamaráda, napo
 js/32_pingpong.js     minihra pingpong u stolů v hale s pingpongem
 js/33_skiny.js        výběr startu (venku / ve skříňkách), Locker v Dolních šatnách a výběr skinu
 js/34_hlas.js         hlasový chat (WebRTC): ve stejné místnosti, hlasitost podle vzdálenosti, mluví se při držení V / 🎤
-js/35_online_hry.js   pingpong a fotbálek proti kamarádovi online (výzva, přijetí, síť během zápasu)
+js/35_online_hry.js   pingpong, fotbálek a šachy proti kamarádovi online (výzva se sázkou, přijetí, síť během zápasu)
 js/15_hlavni.js       update/render podle obrazovky, herní smyčka, START (musí být poslední)
 obrazky/              hlavy 48 × 48 px: hrac.png, mala.png, krivacek.png, rauscher.png, holub.png, soumar.png, lencova.png, vesela.png, mraz.png …
 zvuky/                hudba: pozadí/ = hudba na pozadí (CONFIG.MUSIC_PLAYLIST), „Treplev.mp3“ (v C202 u Kluse), „fotbálek.mp3“ (u fotbálku), Mykyta/ = písničky od Mykyho
@@ -525,7 +525,7 @@ Další učitelé bez úkolu: Křiváček (kabinet2, hlava z `Křiváček oprava
 
 ## Multiplayer (`js/29_multiplayer.js`)
 
-Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. smajlíky** (hotové – uživatel chtěl 10 smajlíků na výběr, žádné psaní), **hlasový chat** (hotový, `js/34_hlas.js`), **3. společný svět**: **pingpong a fotbálek pro dva online** (hotové, `js/35_online_hry.js`); společné úkoly a šachy proti sobě zatím ne.
+Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. smajlíky** (hotové – uživatel chtěl 10 smajlíků na výběr, žádné psaní), **hlasový chat** (hotový, `js/34_hlas.js`), **3. společný svět**: **pingpong, fotbálek a šachy pro dva online se sázkou** (hotové, `js/35_online_hry.js`), postup úkolů ostatních (od kamaráda); společné úkoly zatím ne. Uživatel zvažuje **mód Among Us** ve škole (lobby, tajné role, zabíjení, hlasování, úkoly) – po krocích.
 
 ### Jak se hraje online
 
@@ -556,9 +556,12 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - **TURN:** jen STUN servery Googlu (`VOICE.ICE`). Některé sítě (školní Wi-Fi, mobilní data) přímé spojení nepustí – pak je potřeba TURN server (přeposílá zvuk), třeba účet zdarma na metered.ca, a dopsat ho do `VOICE.ICE`. Zatím nepřidaný.
 - Ověřeno se 3 headless Chromy (`--use-fake-device-for-media-stream` = pípající mikrofon, `--use-fake-ui-for-media-stream`, `--disable-features=WebRtcHideLocalIpsWithMdns`) proti falešné databázi: spojí se jen ti dva s hlasem, mluví jen při držení V / 🎤 (i dotykem), 🔊 u jména, hlasitost z dálky 0,44, ztlumení, rozpojení v jiné místnosti a nové spojení po návratu, vypnutí; schránky v databázi zůstanou prázdné.
 
-### Pingpong a fotbálek pro dva (`js/35_online_hry.js`)
+### Pingpong, fotbálek a šachy pro dva (`js/35_online_hry.js`)
 
-- **Výzva:** v menu pingpongu i fotbálku je modrý řádek **„👥 Online – vyzvat hráče“** (`DUEL.ROW`, jen když je nastavená databáze; bez Online ho zapne a zeptá se na jméno). Ukáže až 4 online hráče ve stejné místnosti, nejbližší první (`duelCandidates`, kdo už hraje s někým jiným, chybí). Výběr → „Čekám, jestli Bob přijme…“ (30 s, `DUEL.ASK_TIME`, Zrušit / Esc). Odmítnutí, vypršení nebo odchod se ukáže červeně v menu (`duel.note`).
+- **Šachy online:** každý posílá celý seznam tahů partie (`mv`, 3 znaky na tah: odkud, kam – znak `48 + pole` – a proměna nebo `.`) a číslo partie (`n`). Kdo je na tahu, připíše svůj tah (`chessOnlineMoved` v `chessApply`), druhý si nové tahy přehraje, jen platné (`chessOnlineTake`). V první partii je vyzyvatel bílý, při odvetě se barvy prohodí (`chessOnlineNew`). **Černý má šachovnici otočenou** (`c.flip`, `chessView`), šipky jdou podle obrazovky. Vzdání `rs: 1` (`c.resignBy`). Ověřeno: celé partie (pat, nedostatek materiálu, mat) stejné u obou, odveta s prohozenými barvami, vzdání, odchod.
+- **Sázka (nápad od kamaráda):** ve výběru soupeře ◀ ▶ (nebo ← →) 0 / 10 / 25 / 50 / 100 Kč (`DUEL.BETS`, jen co mám). Soupeř bez peněz (pole `m` v jeho záznamu) je šedý „nemá na sázku“. Výzva nese sázku v poli `z` (5. část), u vyzvaného je v okně „Sázka 25 Kč (máš 100 Kč)“, bez peněz jen Odmítnout. Oba zaplatí na začátku každé hry i odvety (`duelPay`), vítěz bere obě, remíza = zpět (`duelSettle`, text pod výsledkem `msg2`). **Kdo uteče nebo vypne Online uprostřed hry, sázku ztratí**, soupeř ji dostane.
+
+- **Výzva:** v menu pingpongu, fotbálku i šachů je modrý řádek **„👥 Online – vyzvat hráče“** (`DUEL.ROW`, jen když je nastavená databáze; bez Online ho zapne a zeptá se na jméno). Ukáže až 4 online hráče ve stejné místnosti, nejbližší první (`duelCandidates`, kdo už hraje s někým jiným, chybí). Výběr → „Čekám, jestli Bob přijme…“ (30 s, `DUEL.ASK_TIME`, Zrušit / Esc). Odmítnutí, vypršení nebo odchod se ukáže červeně v menu (`duel.note`).
 - **Vyzvaný** dostane nahoře okno „🏓 Alice tě vyzývá na pingpong!“ s **Přijmout (J) / Odmítnout (X)** (`drawDuelInvite`, `takeDuelTaps`, zvuk). Ukáže se ve hře (bez dialogu a menu ☰) nebo v menu pingpongu / fotbálku; přijetí ho rovnou přenese do zápasu. Když se vyzvou navzájem, zápas začne sám.
 - Výzva jde polem **`z`** v záznamu hráče: `'komu|pp nebo foos|id zápasu|ch / ok / no'` (`duelZ`, `duelParse`).
 - **Během zápasu** posílá každý PUTem nejčastěji po 0,05 s (`DUEL.SEND_EVERY`, beze změny jednou za 0,5 s) svůj stav do **`zapasy/<id zápasu>/<mé id>`** = `{ d: JSON, t }` a proudem sleduje celé `zapasy/<id zápasu>`. Souřadnice v síti jsou z pohledu vyzyvatele (role `h`), druhý (`g`) má stůl otočený o 180° – **každý hraje zdola (pingpong) / zleva červenými (fotbálek)**.
@@ -583,6 +586,10 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - **Bez Firebase:** falešná databáze `python tools/falesna_databaze.py . 8001` (REST GET/PUT/POST/DELETE na libovolné cestě + proud `text/event-stream`, statické soubory hry; pravidla nekontroluje; třetí číslo = zpoždění v ms jako u skutečné databáze, např. `… . 8001 150`) a `index.html?mpdb=http://127.0.0.1:8001`. Dvě hry v headless Chrome (`C:\Program Files\Google\Chrome\Application\chrome.exe --headless=new --remote-debugging-port=…`) řízené přes DevTools protokol z Pythonu (`pip install websocket-client`, `Runtime.evaluate`, snímek přes `canvas.toDataURL`). Herní smyčka se v testu pumpuje ručně `update(1/60)`.
 - Ověřené: vidí se navzájem na správném místě, chůze, ikonka u šachů (`openChess()`), odchod do jiné místnosti, návrat na úvod i vypnutí Online; smajlíky (tlačítko, T a čísla, druhý hráč vidí bublinu, po 3 s pole `e` zmizí); skin druhého hráče. Totéž prošlo i naostro proti `darek-online` (testovací záznamy se pak smažou ručně `curl -X DELETE …/hraci/<id>.json`).
 - **Online zápasy** (22. 10. 2026, falešná databáze bez zpoždění i se 150 ms): dva Chromy s roboty (pádlo / tyče jdou za míčkem, občas schválně minou, `update` obalený robotem) – výzva, okno u vyzvaného, přijetí, pingpong 7:3 ↔ 3:7 i 7:4 se zpožděním (výměny až 68 úderů), fotbálek 5:2 / 1:5 i se zpožděním, skóre a události (`seq`) u obou stejné, odveta, odchod soupeře, odmítnutí pole `z` (401) bez zmizení hráče. **Naostro proti `darek-online` zatím nezkoušeno** – nejdřív musí uživatel nahrát nová pravidla.
+
+### Kamarádovy online duely (`35_duely.js`, nepřevzaté)
+
+- 26. 10. 2026 měl kamarád v `main` vlastní online duely (šachy, fotbálek, pingpong se sázkou, `duely/` + `hry/` v databázi, hostitel počítá míček, soupeř má větší pádlo). **Uživatel chtěl nechat naše** a převzít jen nápady: sázky (dodělané do `35_online_hry.js`) a postup úkolů ostatních (commit `253d690` – u jména „· 3/10“, v katalogu „👥 ✔ jména“, pole `qn` / `qd` + `m` = peníze, `mp.legacy` = stará pravidla → bez nich). Jeho `35_duely.js` a změny v šachách / fotbálku / pingpongu se **nepřebírají**.
 
 ### Kamarádova větev `mptest` (nepřevzatá)
 

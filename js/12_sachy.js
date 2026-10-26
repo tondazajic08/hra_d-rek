@@ -243,13 +243,17 @@ function chessNewGame(level) {
   c.sel = -1; c.cursor = 52; c.targets = []; c.last = null;
   c.captured = { w: [], b: [] };   // sebrané figurky podle jejich barvy
   c.aiT = 0; c.promo = null; c.confirmQuit = false;
-  c.result = null; c.msg = ''; c.overSel = 0; c.reward = 0;
+  c.result = null; c.msg = ''; c.msg2 = ''; c.overSel = 0; c.reward = 0;
+  c.flip = false;   // otočí jen online černý (35_online_hry.js)
   c.legal = chessLegal(c.pos);
 }
-function chessHumanTurn(c) { return c.level.id === 'two' || c.pos.turn === 'w'; }
+function chessHumanTurn(c) { return c.online ? c.pos.turn === c.myColor : c.level.id === 'two' || c.pos.turn === 'w'; }
+// Online černý má šachovnici otočenou (je dole): pole na šachovnici ↔ pole na obrazovce
+const chessView = (c, i) => (c && c.flip ? 63 - i : i);
 
-function chessApply(c, m) {
+function chessApply(c, m, fromNet) {
   if (m.cap) c.captured[m.cap[0]].push(m.cap[1]);
+  if (c.online && !fromNet) chessOnlineMoved(c, m);   // můj tah → soupeři (35_online_hry.js)
   c.pos = chessMake(c.pos, m);
   c.last = { from: m.from, to: m.to };
   const key = chessKey(c.pos);
@@ -272,9 +276,15 @@ function chessFinish(c, how) {
   c.overSel = 0;
   c.confirmQuit = false;
   c.promo = null;
-  const loser = c.level.id === 'two' ? c.pos.turn : (how === 'resign' ? 'w' : c.pos.turn);
+  const loser = c.online && how === 'resign' ? c.resignBy
+    : c.level.id === 'two' ? c.pos.turn : (how === 'resign' ? 'w' : c.pos.turn);
   const winner = how === 'mate' || how === 'resign' ? (loser === 'w' ? 'b' : 'w') : null;
   c.result = { how, winner };
+  c.msg2 = '';
+  if (c.online) {   // online: text z mého pohledu a sázka (35_online_hry.js)
+    c.msg2 = chessOnlineResult(c, how, winner);
+    if (winner) return;
+  }
   const draws = {
     stalemate: 'Pat – remíza',
     fifty: 'Remíza – 50 tahů bez braní',
@@ -299,6 +309,8 @@ function chessFinish(c, how) {
 
 function chessLeave() {
   const c = state.chess;
+  if (c && c.online) duelQuit(c);   // online partie skončí i u soupeře (35_online_hry.js)
+  if (duel.ask) duelCancelAsk();
   state.chess = null;
   setScreen('playing');
   input.events.length = 0;
@@ -330,10 +342,13 @@ function chessPick(c, sq) {
 function chessSquareAt(x, y) {
   const B = CHESS.BOARD;
   const col = Math.floor((x - B.x) / B.sq), row = Math.floor((y - B.y) / B.sq);
-  return col >= 0 && col < 8 && row >= 0 && row < 8 ? row * 8 + col : -1;
+  return col >= 0 && col < 8 && row >= 0 && row < 8 ? chessView(state.chess, row * 8 + col) : -1;
 }
+// menu: obtížnosti, dva hráči, online soupeř (jen s databází, 35_online_hry.js) a Odejít (null)
+const chessMenuItems = () => [...CHESS.LEVELS, ...(mpReady() ? [DUEL.ROW] : []), null];
 function chessMenuRows() {
-  return [...CHESS.LEVELS, null].map((_, i) => ({ x: 210, y: 186 + i * 58, w: 380, h: 48 }));
+  const n = chessMenuItems().length, step = n > 5 ? 54 : 58;
+  return chessMenuItems().map((_, i) => ({ x: 210, y: (n > 5 ? 174 : 186) + i * step, w: 380, h: n > 5 ? 46 : 48 }));
 }
 function chessOverButtons() { return [0, 1].map((i) => ({ x: 250, y: 318 + i * 60, w: 300, h: 48 })); }
 function chessConfirmButtons() { return [{ x: 222, y: 318, w: 170, h: 48 }, { x: 408, y: 318, w: 170, h: 48 }]; }
@@ -347,8 +362,9 @@ function updateChess(dt) {
   const keys = c.keys.splice(0);
   const has = (list, k) => KEYMAP[list].includes(k);
 
+  if (c.phase === 'pick' || c.phase === 'wait') { duelPickUpdate(c, 'chess', events, keys); return; }   // online výzva (35_online_hry.js)
   if (c.phase === 'menu') {
-    const n = CHESS.LEVELS.length + 1;
+    const items = chessMenuItems(), n = items.length;
     for (const k of keys) {
       if (has('up', k)) c.menuSel = (c.menuSel + n - 1) % n;
       if (has('down', k)) c.menuSel = (c.menuSel + 1) % n;
@@ -357,12 +373,15 @@ function updateChess(dt) {
     for (const ev of events) {
       const i = ev.type === 'action' ? c.menuSel : chessHit(chessMenuRows(), ev);
       if (i < 0) continue;
-      if (i >= CHESS.LEVELS.length) chessLeave();
-      else chessNewGame(CHESS.LEVELS[i]);
+      const item = items[i];
+      if (!item) chessLeave();
+      else if (item === DUEL.ROW) duelOpenPick(c);
+      else chessNewGame(item);
       return;
     }
     return;
   }
+  if (c.online) duelPoll(c);   // tahy soupeře (35_online_hry.js)
 
   if (c.phase === 'over') {
     for (const k of keys) {
@@ -371,6 +390,7 @@ function updateChess(dt) {
     }
     for (const ev of events) {
       const i = ev.type === 'action' ? c.overSel : chessHit(chessOverButtons(), ev);
+      if (i === 0 && c.online) { duelOverAgain(c); return; }   // odveta / zpět do menu
       if (i === 0) { c.phase = 'menu'; c.menuSel = Math.max(0, CHESS.LEVELS.indexOf(c.level)); return; }
       if (i === 1) { chessLeave(); return; }
     }
@@ -398,14 +418,15 @@ function updateChess(dt) {
     for (const k of keys) if (k === 'Escape') { c.confirmQuit = false; return; }
     for (const ev of events) {
       const i = ev.type === 'action' ? 0 : chessHit(chessConfirmButtons(), ev);
-      if (i === 0) { chessFinish(c, 'resign'); return; }
+      if (i === 0) { if (c.online) { c.resignBy = c.myColor; c.resigned = true; } chessFinish(c, 'resign'); return; }
       if (i === 1) { c.confirmQuit = false; return; }
     }
     return;
   }
   for (const k of keys) {
     if (k === 'Escape') { c.confirmQuit = true; return; }
-    const d = has('left', k) ? [0, -1] : has('right', k) ? [0, 1] : has('up', k) ? [-1, 0] : has('down', k) ? [1, 0] : null;
+    let d = has('left', k) ? [0, -1] : has('right', k) ? [0, 1] : has('up', k) ? [-1, 0] : has('down', k) ? [1, 0] : null;
+    if (d && c.flip) d = [-d[0], -d[1]];   // otočená šachovnice: šipky podle obrazovky
     if (d) {
       const r = Math.min(7, Math.max(0, (c.cursor >> 3) + d[0]));
       const col = Math.min(7, Math.max(0, (c.cursor & 7) + d[1]));
@@ -415,7 +436,8 @@ function updateChess(dt) {
   for (const ev of events) {
     if (ev.type === 'tap' && ev.x != null && pointInRect(ev.x, ev.y, chessResignButton(), 0)) { c.confirmQuit = true; return; }
   }
-  if (!chessHumanTurn(c)) {   // počítač
+  if (!chessHumanTurn(c)) {   // počítač (online táhne soupeř u sebe)
+    if (c.online) return;
     c.aiT += dt;
     if (c.aiT >= CHESS.AI_DELAY) {
       const m = chessAiMove(c.pos, c.level);
@@ -516,8 +538,9 @@ function drawChessBoard(c, pos) {
   drawRect({ x: x - 18, y: y - 18, w: sq * 8 + 36, h: sq * 8 + 36 }, '#6b4426');
   const playing = c.phase === 'play';
   const checkK = playing && chessInCheck(pos) ? pos.b.indexOf(pos.turn + 'K') : -1;
+  const V = (i) => chessView(c, i);   // online černý vidí šachovnici otočenou
   for (let i = 0; i < 64; i++) {
-    const sx = x + (i & 7) * sq, sy = y + (i >> 3) * sq;
+    const sx = x + (V(i) & 7) * sq, sy = y + (V(i) >> 3) * sq;
     const cell = { x: sx, y: sy, w: sq, h: sq };
     drawRect(cell, ((i >> 3) + (i & 7)) % 2 ? '#a9794f' : '#ecd9b4');
     if (c.last && (i === c.last.from || i === c.last.to)) drawRect(cell, 'rgba(255, 213, 74, 0.4)');
@@ -535,16 +558,16 @@ function drawChessBoard(c, pos) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (let i = 0; i < 8; i++) {
-    ctx.fillText('abcdefgh'[i], x + i * sq + sq / 2, y + 8 * sq + 10);
-    ctx.fillText(String(8 - i), x - 10, y + i * sq + sq / 2);
+    ctx.fillText('abcdefgh'[c.flip ? 7 - i : i], x + i * sq + sq / 2, y + 8 * sq + 10);
+    ctx.fillText(String(c.flip ? i + 1 : 8 - i), x - 10, y + i * sq + sq / 2);
   }
   for (let i = 0; i < 64; i++) {
     const p = pos.b[i];
-    if (p) drawChessPiece(p[1], p[0], x + (i & 7) * sq + sq / 2, y + (i >> 3) * sq + sq / 2 - 2, sq);
+    if (p) drawChessPiece(p[1], p[0], x + (V(i) & 7) * sq + sq / 2, y + (V(i) >> 3) * sq + sq / 2 - 2, sq);
   }
   // kam může vybraná figurka: tečka, u braní kroužek
   for (const tq of c.targets || []) {
-    const cx = x + (tq & 7) * sq + sq / 2, cy = y + (tq >> 3) * sq + sq / 2;
+    const cx = x + (V(tq) & 7) * sq + sq / 2, cy = y + (V(tq) >> 3) * sq + sq / 2;
     ctx.fillStyle = 'rgba(20, 60, 20, 0.45)';
     ctx.strokeStyle = 'rgba(20, 60, 20, 0.55)';
     ctx.lineWidth = 5;
@@ -556,7 +579,7 @@ function drawChessBoard(c, pos) {
   if (playing && !isTouchHint() && !c.promo && !c.confirmQuit && chessHumanTurn(c)) {
     ctx.strokeStyle = '#ffd54a';
     ctx.lineWidth = 3;
-    ctx.strokeRect(x + (c.cursor & 7) * sq + 2, y + (c.cursor >> 3) * sq + 2, sq - 4, sq - 4);
+    ctx.strokeRect(x + (V(c.cursor) & 7) * sq + 2, y + (V(c.cursor) >> 3) * sq + 2, sq - 4, sq - 4);
   }
 }
 
@@ -575,13 +598,14 @@ function drawChessPanel(c) {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(X + 24, 149, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     let who = white ? 'Na tahu: bílý' : 'Na tahu: černý';
-    if (c.level.id !== 'two') who = white ? 'Hraješ ty (bílý)' : 'Počítač přemýšlí…';
+    if (c.online) who = c.pos.turn === c.myColor ? `Hraješ ty (${white ? 'bílý' : 'černý'})` : `Táhne ${duelOppName()}…`;
+    else if (c.level.id !== 'two') who = white ? 'Hraješ ty (bílý)' : 'Počítač přemýšlí…';
     if (c.phase === 'over') who = 'Konec partie';
     ctx.font = 'bold 15px sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(who, X + 44, 150);
+    ctx.fillText(who, X + 44, 150, W - 50);
     if (c.phase === 'play' && chessInCheck(c.pos)) drawOutlinedText('ŠACH!', mid, 202, 'bold 22px sans-serif', '#ff5a4a', 'middle');
     // sebrané figurky
     ctx.font = 'bold 13px sans-serif';
@@ -617,14 +641,19 @@ function renderChess() {
     drawChessBox(180, 110, 440, 420);
     drawOutlinedText('Šachy – vyber soupeře', 400, 150, 'bold 24px sans-serif', '#ffd54a', 'middle');
     const rows = chessMenuRows();
-    [...CHESS.LEVELS, null].forEach((l, i) => {
+    chessMenuItems().forEach((l, i) => {
       const label = l ? l.name + (l.reward ? `  ·  výhra +${l.reward} Kč` : '') : 'Odejít';
-      drawChessButton(rows[i], label, i === c.menuSel, l ? '#3d5f3a' : '#5a4636');
+      drawChessButton(rows[i], label, i === c.menuSel, !l ? '#5a4636' : l === DUEL.ROW ? '#2f5a7a' : '#3d5f3a');
     });
+    drawDuelNote(92);   // „Bob neodpovídá“ (35_online_hry.js)
+  } else if (c.phase === 'pick' || c.phase === 'wait') {
+    drawDuelPick(c, 'chess');   // výběr soupeře online (35_online_hry.js)
   } else if (c.phase === 'over') {
     drawChessBox(200, 200, 400, 250);
-    drawOutlinedText(c.msg, 400, 262, 'bold 22px sans-serif', c.reward || (c.result.winner && c.level.id === 'two') ? '#ffd54a' : '#ffffff', 'middle');
-    chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? 'Hrát znovu' : 'Odejít', i === c.overSel));
+    const gold = c.reward || (c.result && c.result.winner && (c.level.id === 'two' || (c.online && c.result.winner === c.myColor)));
+    drawOutlinedText(c.msg, 400, 252, 'bold 22px sans-serif', gold ? '#ffd54a' : '#ffffff', 'middle');
+    if (c.msg2) drawOutlinedText(c.msg2, 400, 284, 'bold 16px sans-serif', '#ffd54a', 'middle');
+    chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? (c.online ? duelOverLabel(c) : 'Hrát znovu') : 'Odejít', i === c.overSel));
   } else if (c.promo) {
     drawChessBox(150, 200, 500, 190);
     drawOutlinedText('Proměna pěšce – vyber figurku', 400, 232, 'bold 20px sans-serif', '#ffd54a', 'middle');
