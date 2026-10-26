@@ -7,7 +7,9 @@
 // pamatuje se v prohlížeči (SKIN_KEY) a vidí ho i ostatní online hráči (pole s v databázi).
 // Nový skin = nový řádek: { id, name, face?: 'obrazky/x.png' (bez ní Romanova hlava),
 //   hair (barva vlasů zezadu), body, check?, dots?, collar, tie?, arms, pants, shoes }
-// Zatím jsou to provizorní oblečení pro Romana – uživatel dodá vlastní skiny.
+// Za Romanovými oblečeními jsou skiny všech postav ze hry s vlastním vzhledem (učitelé,
+// studenti, postavy z Vraha) – person = klíč do TEACHERS, look = kopie vzhledu při načtení.
+// Převlékat se jde u Lockeru a v čekárně Among Us (36_among.js).
 // =====================================================================
 const SKIN_KEY = 'hra_darek_skin_v1';
 const SKINS = [
@@ -22,6 +24,11 @@ const SKINS = [
   { id: 'kostky', name: 'Roman v kostkované košili', hair: '#3a2a1c',
     body: '#b23a3a', check: 'rgba(0, 0, 0, 0.35)', collar: '#b23a3a', arms: '#b23a3a', pants: '#3b4a6b', shoes: '#6d4c2f' },
 ];
+// Postavy ze hry (TEACHERS jsou už načtení – soubory 03–28 jdou před tímhle)
+for (const [id, t] of Object.entries(TEACHERS)) {
+  if (!t.look || (!t.look.face && !t.look.hair)) continue;
+  SKINS.push({ id: `p_${id}`, name: t.name, person: id, look: JSON.parse(JSON.stringify(t.look)), color: t.color, hair: t.look.hair || '#3a2a1c' });
+}
 const skinFaces = {};   // id → Image (jen skiny s vlastní hlavou)
 for (const s of SKINS) if (s.face) { skinFaces[s.id] = new Image(); skinFaces[s.id].src = s.face; }
 
@@ -33,6 +40,10 @@ function setMySkin(skin) {
 }
 // Vzhled pro drawFigure (back = postava zezadu: bez obličeje, límce a kravaty)
 function skinLook(skin, back) {
+  if (skin.person) {   // postava ze hry: stejný vzhled jako ona
+    const look = { ...skin.look, face: faceImgs[skin.look.face] || null, fallback: skin.color };
+    return back ? { ...look, face: null, collar: look.body, tie: null, hair: skin.hair } : look;
+  }
   const face = skinFaces[skin.id] || playerFaceImg;
   const look = { face, fallback: CONFIG.PLAYER_COLOR, body: skin.body, check: skin.check, dots: skin.dots,
     collar: skin.collar, tie: skin.tie, arms: skin.arms, pants: skin.pants, shoes: skin.shoes };

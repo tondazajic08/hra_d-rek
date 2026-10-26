@@ -112,4 +112,5 @@ class H(SimpleHTTPRequestHandler):
             set_at(parts, None); broadcast(parts, None)
         self.reply(None)
 
+ThreadingHTTPServer.request_queue_size = 128   # víc prohlížečů najednou (výchozích 5 nestačilo – soubory hry se pak nenačetly)
 ThreadingHTTPServer(('127.0.0.1', PORT), H).serve_forever()

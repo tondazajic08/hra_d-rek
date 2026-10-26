@@ -34,6 +34,8 @@
 // 4. Úkoly (37_among_ukoly.js): každý dostane na mapě N míst (testy z předmětů, rychlá matika,
 //    kabely, Bakaláři, tabule, koš). Když nevinní splní všechny úkoly, vyhráli.
 //    Animace smrti: oběť vidí útok přes celou obrazovku, ostatní padající tělo a krev.
+// 5. (38_among_extra.js) třídy na mapách, venty pro záškodníka, sabotáže (světla, dveře),
+//    barvy hráčů a převlékání v čekárně (👕 → Locker se všemi postavami ze hry).
 // =====================================================================
 const AMONG = {
   MAX: 10,                 // hráčů v jedné hře
@@ -53,9 +55,10 @@ const AMONG = {
   ACT: {   // akční tlačítka vpravo dole (vlevo je na mobilu joystick)
     kill: { x: 690, y: 470, w: 96, h: 96 },
     report: { x: 584, y: 470, w: 96, h: 96 },
-    emer: { x: 478, y: 470, w: 96, h: 96 },
+    emer: { x: 478, y: 470, w: 96, h: 96 },   // POUŽÍT: úkol / vent / vypínač / porada
+    sab: { x: 372, y: 470, w: 96, h: 96 },    // záškodník: sabotáž (38_among_extra.js)
   },
-  KEYS: { kill: 'KeyQ', report: 'KeyR', emer: 'KeyE' },
+  KEYS: { kill: 'KeyQ', report: 'KeyR', emer: 'KeyE', sab: 'KeyF' },
   LOBBY_PART: 'hlavni',    // díl spojené chodby s čekárnou
   WALL: 20,                // zeď dílu – hráč zůstane uvnitř
   PANEL: { x: 190, y: 104, w: 420, h: 460 },
@@ -392,6 +395,7 @@ function updateAmong(dt) {
   if (state.transition) { updateTransition(dt); return; }
   if (state.pauseMenu) { pauseMenuEvents(events); return; }
   if (state.amongSet) { amongSetEvents(events); return; }
+  if (state.amongSab) { amongSabEvents(events); return; }   // výběr sabotáže (38_among_extra.js)
   if (among.killCd > 0 && among.phase === 'play') among.killCd = Math.max(0, among.killCd - dt);
   if (among.slash) { among.slash.t += dt; if (among.slash.t > 0.6) among.slash = null; }
   if (among.deathAnim) {   // zabili mě: animace, pak „ZABILI TĚ!“
@@ -411,6 +415,7 @@ function updateAmong(dt) {
   if (among.phase === 'lobby') {
     for (const ev of events) {
       if (ev.x != null && pointInRect(ev.x, ev.y, amongSetBtn(), 4)) { state.amongSet = { sel: 0 }; return; }
+      if (ev.x != null && pointInRect(ev.x, ev.y, amongDressBtn(), 4)) { openSkins(); return; }   // převléct se (33_skiny.js)
       if (amongIsHost() && (ev.type === 'action' || (ev.x != null && pointInRect(ev.x, ev.y, AMONG.START_BTN, 4)))) amongStartRound();
     }
   } else {   // kolo: zabíjení, hlášení, porada, úkoly
@@ -418,10 +423,12 @@ function updateAmong(dt) {
       if (ev.x == null) continue;
       for (const k of Object.keys(AMONG.ACT)) if (pointInRect(ev.x, ev.y, AMONG.ACT[k], 4)) acts.push(k);
     }
+    if (amongVentUpdate(dt, events, acts)) return;   // ve ventu (38_among_extra.js)
     for (const a of acts) {
       if (a === 'kill') amongTryKill();
       else if (a === 'report') amongTryReport();
-      else if (a === 'emer') { const ti = amongTaskNear(); if (ti >= 0) amongOpenTask(ti); else amongTryEmergency(); }   // E = použít úkol / porada
+      else if (a === 'emer') amongUse();        // E = úkol / vent / vypínač / porada (38_among_extra.js)
+      else if (a === 'sab') amongSabOpen();     // F = sabotáž
     }
   }
   amongMove(dt);
@@ -523,6 +530,7 @@ function amongSend(d) {
     .catch(() => {});
 }
 function amongWriteS(S) {
+  S.v = ((among.S && among.S.v) || 0) + 1;   // pořadí stavu: starší ozvěna z proudu se zahodí
   fetch(amongUrl(`${among.game}/s`), { method: 'PUT', body: JSON.stringify({ d: JSON.stringify(S), t: { '.sv': 'timestamp' } }) })
     .then((r) => { if (r.status === 401 || r.status === 403) amongBlocked(); })
     .catch(() => {});
@@ -541,6 +549,7 @@ function amongPurge() {
 // Nový stav od hostitele → co se změnilo u mě
 function amongApplyS(S) {
   if (!amongOn() || !S || typeof S !== 'object') return;
+  if (among.S && Number.isFinite(among.S.v) && Number.isFinite(S.v) && S.v < among.S.v) return;   // starší stav (přišel pozdě)
   const prev = among.S;
   among.S = S;
   const inRound = Array.isArray(S.p) && S.p.includes(mp.id);
@@ -563,6 +572,7 @@ function amongApplyS(S) {
     among.killCd = Math.min(AMONG.FIRST_KILL, amongSet().kc);
     among.myDone = []; among.deathAnim = null; among.deathT = 0;
     state.pauseMenu = null; state.emotePick = false; state.amongSet = null; state.amongTask = null;
+    if (state.screen === 'skins') skinsLeave();   // převlékal se v čekárně
     amongToSpawn();
     mp.last = '';   // gp: 1
     playSound(among.role === 'zaskodnik' ? [[196, 0, 0.25], [147, 0.28, 0.4]] : [[523, 0, 0.1], [659, 0.12, 0.1], [784, 0.24, 0.2]]);
@@ -744,6 +754,7 @@ const amongRoleColor = (role) => (role === 'zaskodnik' ? '#ff4d4d' : '#4fc3f7');
 
 // --- Nastavení v čekárně (⚙) ---
 const amongSetBtn = () => (amongIsHost() ? AMONG.SET_BTN : { x: 325, y: 524, w: 150, h: 48 });
+const amongDressBtn = () => (amongIsHost() ? { x: 130, y: 524, w: 150, h: 48 } : { x: 165, y: 524, w: 150, h: 48 });   // 👕 převléct
 const AMONG_SET_PANEL = { x: 140, y: 56, w: 520, h: 536 };
 const amongSetRow = (i) => ({ x: 160, y: 100 + i * 37, w: 480, h: 33 });
 const AMONG_SET_CLOSE = { x: 300, y: 512, w: 200, h: 42 };
@@ -943,7 +954,9 @@ function drawAmongMeeting() {
     ctx.font = 'bold 17px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillStyle = dead ? '#8a8f99' : '#ffffff';
     const tag = (id === S.meet.by ? '📢 ' : '') + (dead ? '✝ ' : '') + amongName(id) + (id === mp.id ? ' (ty)' : '');
-    ctx.fillText(tag, r.x + 14, r.y + r.h / 2 + 1, r.w - 80);
+    amongColorDot(id, r.x + 18, r.y + r.h / 2, 9);
+    ctx.fillStyle = dead ? '#8a8f99' : '#ffffff';
+    ctx.fillText(tag, r.x + 34, r.y + r.h / 2 + 1, r.w - 100);
     if (dead) {   // přeškrtnutý
       ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(r.x + 10, r.y + r.h / 2); ctx.lineTo(r.x + r.w - 10, r.y + r.h / 2); ctx.stroke();
@@ -1018,6 +1031,7 @@ function drawAmongAction(r, icon, label, ok, extra) {
 }
 function drawAmongHud() {
   const g = amongMyGame(), players = g ? g.players : [], lobby = among.phase === 'lobby', keys = !isTouchHint();
+  drawAmongDark();   // zhasnutá světla (38_among_extra.js)
   ctx.textBaseline = 'middle';
   ctx.font = CONFIG.COUNTER_FONT; ctx.textAlign = 'left';
   ctx.fillStyle = lobby ? '#ff5a4a' : amongRoleColor(among.role);
@@ -1040,6 +1054,7 @@ function drawAmongHud() {
       drawChessButton(AMONG.START_BTN, ok ? (keys ? '▶ Začít hru (mezerník)' : '▶ Začít hru') : `Potřeba ${AMONG.MIN} hráči (${n}/${AMONG.MIN})`, false, ok ? '#2e7d32' : '#4a4a4a');
     }
     drawChessButton(amongSetBtn(), `⚙ Nastavení`, false, '#2f5a7a');
+    drawChessButton(amongDressBtn(), '👕 Převléct', false, '#6a2c8c');
   } else if (among.phase === 'play') {
     const b = amongBodyNear(), em = amongEmergencyState();
     if (among.role === 'zaskodnik' && !among.dead) {
@@ -1047,8 +1062,9 @@ function drawAmongHud() {
       drawAmongAction(AMONG.ACT.kill, '🔪', keys ? 'ZABÍT (Q)' : 'ZABÍT', !!t && cd <= 0, cd > 0 ? String(cd) : '');
     }
     if (!among.dead) drawAmongAction(AMONG.ACT.report, '📢', keys ? 'NAHLÁSIT (R)' : 'NAHLÁSIT', !!b);
-    if (amongTaskNear() >= 0) drawAmongAction(AMONG.ACT.emer, '🛠', keys ? 'POUŽÍT (E)' : 'POUŽÍT', true);   // úkol (37_among_ukoly.js)
-    else if (!among.dead && em.near) drawAmongAction(AMONG.ACT.emer, '🚨', keys ? 'PORADA (E)' : 'PORADA', em.ok, em.left <= 0 ? '✕' : em.wait > 0 ? String(em.wait) : '');
+    const use = amongUseInfo(em, keys);   // úkol / vent / vypínač / porada (38_among_extra.js)
+    if (use) drawAmongAction(AMONG.ACT.emer, use.icon, use.label, use.ok, use.extra || '');
+    drawAmongSabButton(keys);
   }
   // hráči vpravo pod počtem online (v kole i kdo je mrtvý – vidí jen duch)
   const H = AMONG.HUD, rowH = 20, h = 30 + players.length * rowH;
@@ -1060,7 +1076,8 @@ function drawAmongHud() {
     players.forEach((pl, i) => {
       const ghost = among.dead && amongIsDead(pl.id);
       ctx.fillStyle = pl.me ? '#ffd54a' : ghost ? '#8a8f99' : '#e0e6f2';
-      ctx.fillText(`${i === 0 ? '👑 ' : '• '}${ghost ? '👻 ' : ''}${pl.n}${pl.me ? ' (ty)' : ''}`, H.x + 10, H.y + 34 + i * rowH, H.w - 20);
+      ctx.fillText(`${i === 0 ? '👑 ' : '   '}${ghost ? '👻 ' : ''}${pl.n}${pl.me ? ' (ty)' : ''}`, H.x + 10, H.y + 34 + i * rowH, H.w - 20);
+      if (i > 0) amongColorDot(pl.id, H.x + 16, H.y + 34 + i * rowH, 5);   // barva hráče (38_among_extra.js)
     });
   }
   drawAmongTaskList();   // seznam úkolů vlevo (37_among_ukoly.js)
