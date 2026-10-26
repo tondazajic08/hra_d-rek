@@ -16,9 +16,9 @@
 // Ovládání: W S / ↑ ↓ = dopředu / dozadu, A D / ← → = do stran, myš = otáčení (klikni do hry,
 //   nebo táhni se zmáčknutým tlačítkem), Shift = běh (dojde dech), Esc = pauza.
 //   Mobil: joystick vlevo, tažení vpravo = otáčení.
-// Barvy podle fotek (fotky/chodba za hlavním vchodem, chodba za venkovní učebnou): Hlavní chodba
-//   a křídla bílé / světle modrošedé zdi s černou lištou, bílé sloupy, tmavé teraco; vstupní chodba
-//   okrová se světlými rámy, šedým pruhem, červeným soklem a modrým kobercem.
+// Barvy podle virtuální prohlídky na gympt.cz (Matterport): Hlavní chodba a křídla bílé zdi,
+//   bílé sloupy, černá lišta u podlahy, bílé klenby, světlé béžovošedé teraco; vstupní chodba
+//   velké krémové plochy v okrových rámech, šedomodrý pruh, cihlově oranžový sokl, šedé schody.
 // =====================================================================
 const HOROR = {
   PARTS: ['hlavni', 'zapad', 'vstup'],   // kde se hraje (díly ROOMS.chodba)
@@ -34,11 +34,12 @@ const HOROR = {
   KEYS: 3,
   START: { x: 1140, y: 2010, a: -Math.PI / 2 },   // dole v Hlavní chodbě u vstupu
 };
-// Barvy podle dílu chodby (RGB): zeď nahoře, zeď dole, pruh / lišta, podlaha, strop
+// Barvy podle dílu chodby (RGB, podle prohlídky na gympt.cz): zeď nahoře, zeď dole, pruh / lišta,
+// podlaha, strop; panel = krémové plochy v okrovém rámu (vstupní chodba)
 const HOROR_STYLE = {
-  hlavni: { top: [228, 234, 240], low: [205, 216, 228], band: [40, 40, 44], bandH: 6, lowH: 52, floor: [74, 76, 78], ceil: [235, 238, 242] },
-  zapad: { top: [228, 234, 240], low: [205, 216, 228], band: [40, 40, 44], bandH: 6, lowH: 52, floor: [74, 76, 78], ceil: [235, 238, 242] },
-  vstup: { top: [226, 160, 72], low: [178, 82, 60], band: [176, 186, 190], bandH: 8, lowH: 46, floor: [44, 74, 104], ceil: [240, 232, 214], panel: [238, 222, 186] },
+  hlavni: { top: [238, 239, 240], low: [232, 234, 236], band: [26, 30, 42], bandH: 6, lowH: 40, floor: [176, 170, 158], ceil: [242, 242, 240] },
+  zapad: { top: [238, 239, 240], low: [232, 234, 236], band: [26, 30, 42], bandH: 6, lowH: 40, floor: [176, 170, 158], ceil: [242, 242, 240] },
+  vstup: { top: [226, 162, 76], low: [198, 94, 62], band: [180, 194, 200], bandH: 10, lowH: 44, floor: [162, 162, 160], ceil: [244, 236, 220], panel: [238, 224, 198] },
 };
 const HOROR_FURNITURE = {   // nábytek: barva a výška (px světa); null = neviditelná zábrana (jako zeď)
   pillar: { c: [240, 242, 246], h: 130 }, chairrow: { c: [40, 90, 180], h: 46 }, chair: { c: [40, 90, 180], h: 46 },
@@ -431,6 +432,14 @@ function hororScare(H, M) {
 }
 
 // --- Kreslení ---
+// Kde má postava z drawFigure oči (od nohou, px postavy): stejný výpočet hlavy jako v drawFigure
+// (08_grafika_mistnosti.js) – hlava jde s trupem do strany a při kroku poskakuje
+function hororEyes(phase, blend) {
+  const step = Math.sin(phase) * blend, sway = step * CONFIG.PLAYER_SWAY, size = CONFIG.PLAYER_HEAD_SIZE;
+  const neckX = Math.round(Math.sin(sway) * 26), bob = Math.round(Math.abs(step) * 1.5);
+  const hy = -13 - 24 - size + 5 - bob;   // hipY − trup − hlava + překryv krku − poskok
+  return { x: neckX, y: hy + size * 0.46, dx: size * 0.17 };
+}
 const hororLightAt = (H, dist, cam) => {
   const cone = Math.max(0, Math.min(1, 1 - (Math.abs(cam) - 0.22) / 0.5));
   const near = Math.pow(Math.max(0, 1 - dist / HOROR.LIGHT), 1.35);
@@ -490,8 +499,8 @@ function renderHoror() {
     // zeď podle dílu: nahoře světlá (ve vstupu okrová se světlými rámy), dole sokl, pruh / černá lišta
     const low = horizon + (HOROR.EYE - ws.lowH) / perp * proj, bandH = ws.bandH / perp * proj;
     ctx.fillStyle = shade(ws.top[0], ws.top[1], ws.top[2], seam); ctx.fillRect(x, top, HOROR.COL_W + 1, low - top);
-    if (ws.panel && u > 0.15 && u < 0.85 && (Math.floor(hit.u) % 6) > 0) {
-      const py = horizon - (100 - HOROR.EYE) / perp * proj, ph = 50 / perp * proj;
+    if (ws.panel && u > 0.12 && u < 0.88 && (Math.floor(hit.u) % 7) > 0) {   // krémové plochy v okrovém rámu
+      const py = horizon - (122 - HOROR.EYE) / perp * proj, ph = 62 / perp * proj;
       ctx.fillStyle = shade(ws.panel[0], ws.panel[1], ws.panel[2], 1); ctx.fillRect(x, py, HOROR.COL_W + 1, ph);
     }
     ctx.fillStyle = shade(ws.low[0], ws.low[1], ws.low[2], seam); ctx.fillRect(x, low, HOROR.COL_W + 1, bot - low);
@@ -522,15 +531,19 @@ function renderHoror() {
     }
     // Láďa
     const scale = (HOROR.LADA.HEIGHT / perp * proj) / 80;
+    const phase = H.lada.mode === 'chase' ? H.t * 12 : H.t * 6;
     ctx.save();
     if ('filter' in ctx) ctx.filter = `brightness(${Math.max(0.04, l).toFixed(2)})`;
     ctx.translate(sx, feet); ctx.scale(scale, scale);
-    drawFigure(0, 0, H.lada.mode === 'chase' ? H.t * 12 : H.t * 6, 1, teacherLook(TEACHERS.lada));
+    drawFigure(0, 0, phase, 1, teacherLook(TEACHERS.lada));
     ctx.restore();
-    if (l < 0.4) {   // ve tmě svítí oči
-      const ey = feet - 56 * scale, r = Math.max(1.5, 2.6 * scale);
+    if (l < 0.4) {   // ve tmě svítí oči – jdou s hlavou
+      const e = hororEyes(phase, 1), r = Math.max(1.5, 2.6 * scale);
       ctx.fillStyle = `rgba(255, 30, 30, ${0.9 - l})`;
-      ctx.beginPath(); ctx.arc(sx - 6 * scale, ey, r, 0, Math.PI * 2); ctx.arc(sx + 6 * scale, ey, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(sx + (e.x - e.dx) * scale, feet + e.y * scale, r, 0, Math.PI * 2);
+      ctx.arc(sx + (e.x + e.dx) * scale, feet + e.y * scale, r, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
   // kužel baterky (lehká záře) a tma na okrajích
