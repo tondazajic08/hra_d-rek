@@ -127,7 +127,7 @@ function mpSync() {
     const o = mp.others[id] || { dx: v.x, dy: v.y, phase: 0, blend: 0, color: mpColor(id) };
     if (o.r !== v.r) { o.dx = v.x; o.dy = v.y; }   // přešel do jiné místnosti: neklouzat přes celou mapu
     Object.assign(o, { id, v: v.v === 1, n: cleanPlayerName(v.n) || '?', r: v.r, x: v.x, y: v.y, a: typeof v.a === 'string' ? v.a : '', s: typeof v.s === 'string' ? v.s : '', z: typeof v.z === 'string' ? v.z : '', t: v.t,
-      g: typeof v.g === 'string' ? v.g : '', gj: Number.isFinite(v.gj) ? v.gj : 0,   // hra Among Us (36_among.js)
+      g: typeof v.g === 'string' ? v.g : '', gj: Number.isFinite(v.gj) ? v.gj : 0, gp: v.gp === 1,   // hra Among Us (36_among.js)
       m: Number.isFinite(v.m) ? v.m : 0, qn: Number.isInteger(v.qn) ? v.qn : 0, qd: typeof v.qd === 'string' && v.qd ? v.qd.split(',') : [] });
     if (Number.isInteger(v.e) && MP.EMOTES[v.e] && v.ek !== o.ek) { o.ek = v.ek; o.emote = MP.EMOTES[v.e]; o.emoteT = state.time; }   // nový smajlík
     next[id] = o;
@@ -171,7 +171,7 @@ function mpMyRecord() {
   const z = duelZ();
   if (z) rec.z = z;
   const g = amongGameId();
-  if (g) { rec.g = g; rec.gj = among.joined; }   // hra Among Us (36_among.js)          // výzva / zápas v pingpongu, fotbálku nebo šachách (35_online_hry.js)
+  if (g) { rec.g = g; rec.gj = among.joined; if (among.phase !== 'lobby') rec.gp = 1; }   // hra Among Us (36_among.js), gp = hraje kolo          // výzva / zápas v pingpongu, fotbálku nebo šachách (35_online_hry.js)
   if (mp.legacy) return rec;
   rec.m = state.money;       // kolik může vsadit v online zápase (35_online_hry.js)
   if (!state.mode) {   // postup v úkolech hlavní hry – vidí ho ostatní (jmenovka, katalog; od kamaráda)

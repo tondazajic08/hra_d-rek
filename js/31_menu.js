@@ -14,6 +14,7 @@ const pauseItems = () => [
   { id: 'resume', label: '▶ Pokračovat' },
   ...(mpReady() ? [{ id: 'online', label: `👥 Online: ${mp.on ? 'ZAP' : 'VYP'}` }] : []),   // 29_multiplayer.js
   ...voicePauseItems(),                                                                     // 🎤 hlas a ztlumení hráčů (34_hlas.js)
+  ...amongPauseItems(),                                                                     // Among Us: ukončit kolo (36_among.js)
   { id: 'quality', label: qualityLabel() },                                                  // 30_kvalita.js
   { id: 'menu', label: '🏠 Hlavní menu' },
 ];
@@ -54,6 +55,7 @@ function pauseMenuEvents(events) {
     const item = pauseItems()[i];
     if (item.id === 'online') { setOnline(!mp.on); m.sel = i; continue; }       // zapnout / vypnout online, nabídka zůstane
     if (voicePauseAction(item.id)) { m.sel = i; continue; }                     // hlas zap/vyp, ztlumit hráče
+    if (amongPauseAction(item.id)) return;                                      // Among Us: ukončit kolo
     if (item.id === 'quality') { toggleQuality(); m.sel = i; continue; }        // výchozí / nízká kvalita
     state.pauseMenu = null;
     if (item.id === 'menu') { saveProgress(); goToTitle(); }   // postup (i čas speedrunu) se uloží, v menu je „Pokračovat“

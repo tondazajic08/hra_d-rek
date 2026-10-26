@@ -20,6 +20,7 @@
         "qd": { ".validate": "newData.isString() && newData.val().length < 601" },
         "g": { ".validate": "newData.isString() && newData.val().length < 41" },
         "gj": { ".validate": "newData.isNumber()" },
+        "gp": { ".validate": "newData.val() === 1" },
         "t": { ".validate": "newData.val() === now" },
         "$other": { ".validate": false }
       }
@@ -36,6 +37,19 @@
           "t": { ".validate": "newData.val() === now" },
           "$other": { ".validate": false }
         }
+      }
+    },
+    "among": {
+      ".read": true,
+      "$g": {
+        ".write": "$g.length < 41",
+        ".validate": "newData.hasChildren(['k', 'st', 't'])",
+        "k": { ".validate": "newData.isNumber()" },
+        "st": { ".validate": "newData.val() === 'play' || newData.val() === 'lobby'" },
+        "im": { ".validate": "newData.isString() && newData.val().length < 200" },
+        "p": { ".validate": "newData.isString() && newData.val().length < 400" },
+        "t": { ".validate": "newData.val() === now" },
+        "$other": { ".validate": false }
       }
     },
     "zapasy": {
