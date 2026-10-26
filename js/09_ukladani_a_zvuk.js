@@ -48,6 +48,10 @@ function loadProgress(key = CONFIG.SAVE_KEY) {
       });
     } else return null;
     if (!Object.values(quests).some((st) => st !== 'none') && !data.money && !(data.speedrun && data.speedrun.t > 0)) return null;   // nic rozehraného (rozběhnutý speedrun se ale nabídne)
+    // Vrah: úkol „vrah“ je zadaný hned od začátku – rozehraný je až s postupem (jinak by na úvodu
+    // pořád svítilo „Pokračovat ve Vrahovi“ i „Začít Vraha znovu“, i když hráč nic neudělal)
+    const v = data.vrah;
+    if (key === CONFIG.SAVE_KEY_VRAH && (!v || (v.stage === 'binkova1' && !(v.clues && v.clues.length))) && !data.money && !(data.speedrun && data.speedrun.t > 0)) return null;
     return {
       quests, tracked: typeof data.tracked === 'string' ? data.tracked : null,
       money: Number.isFinite(data.money) ? data.money : 0,
