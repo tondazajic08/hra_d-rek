@@ -44,7 +44,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 function setScreen(screen) {
   state.screen = screen;
-  document.body.classList.toggle('menu', screen !== 'playing');
+  document.body.classList.toggle('menu', screen !== 'playing' && screen !== 'horor');   // joystick i v hororu (39_horor.js)
 }
 
 // mode: null = hlavní hra, 'vrah' = Vrah z učebny C109
@@ -138,6 +138,7 @@ function modesItems() {
   const items = state.savedVrah
     ? [{ id: 'vrah', label: '🔍 Pokračovat ve Vrahovi' }, { id: 'vrahNew', label: 'Začít Vraha znovu' }]
     : [{ id: 'vrah', label: '🔍 Vrah z učebny C109' }];
+  items.push({ id: 'horor', label: '👻 Bacha na Láďu' });                             // 39_horor.js
   if (mpReady()) items.push({ id: 'among', label: '👾 Among Us (online)' });         // 36_among.js
   if (leaderboardReady()) items.push({ id: 'leaderboard', label: '🏆 Žebříček' });   // 28_speedrun.js
   items.push({ id: 'back', label: 'Zpět' });

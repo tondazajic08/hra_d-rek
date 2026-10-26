@@ -11,7 +11,7 @@ Tento soubor je hlavně pro **Clauda v příští konverzaci**, aby věděl, co 
 
 ## Spuštění
 
-**Úvod:** jen hlavní hra (**Hrát**, nebo **Pokračovat** + **Nová hra**) a pod tím **🎮 Módy** (`modesItems`, `drawModesMenu` v `10_obrazovky.js`): 🔍 Vrah z učebny C109 (s postupem Pokračovat ve Vrahovi + Začít Vraha znovu), 👾 Among Us (online, jen s databází), 🏆 Žebříček, Zpět. Uživatel chtěl, ať na úvodu není moc tlačítek.
+**Úvod:** jen hlavní hra (**Hrát**, nebo **Pokračovat** + **Nová hra**) a pod tím **🎮 Módy** (`modesItems`, `drawModesMenu` v `10_obrazovky.js`): 🔍 Vrah z učebny C109 (s postupem Pokračovat ve Vrahovi + Začít Vraha znovu), 👻 Bacha na Láďu, 👾 Among Us (online, jen s databází), 🏆 Žebříček, Zpět. Uživatel chtěl, ať na úvodu není moc tlačítek.
 
 **Mobil** (`isMobileView`: dotyková obrazovka, nebo `?mobil` v adrese pro zkoušení na počítači):
 - Svět je přiblížený `CONFIG.MOBILE_ZOOM` (1.45) a kamera jde za hráčem (`getCamera(room, zoom)`, obrazovka = (svět − cam) × zoom; ťuknutí se přepočítá zpátky).
@@ -75,6 +75,7 @@ js/35_online_hry.js   pingpong, fotbálek a šachy proti kamarádovi online (vý
 js/36_among.js        režim Among Us: seznam her, čekárna, nastavení, mapy A a C, role, zabíjení, porady, hlasování, konec
 js/37_among_ukoly.js  Among Us: úkoly (testy z předmětů po 50 otázkách, rychlá matika, kabely, Bakaláři, tabule, koš)
 js/38_among_extra.js  Among Us: třídy na mapách, venty, sabotáže (světla, dveře), barvy hráčů
+js/39_horor.js        Bacha na Láďu – horor z první osoby (raycasting), Láďa honí, klíče, jumpscare
 js/15_hlavni.js       update/render podle obrazovky, herní smyčka, START (musí být poslední)
 obrazky/              hlavy 48 × 48 px: hrac.png, mala.png, krivacek.png, rauscher.png, holub.png, soumar.png, lencova.png, vesela.png, mraz.png …
 zvuky/                hudba: pozadí/ = hudba na pozadí (CONFIG.MUSIC_PLAYLIST), „Treplev.mp3“ (v C202 u Kluse), „fotbálek.mp3“ (u fotbálku), Mykyta/ = písničky od Mykyho
@@ -603,6 +604,18 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - Kamarád (`robkojabko/darek_v2`) má ve větvi `mptest` vlastní online: `29_online.js` + `31_online_hry.js` (šachy a fotbálek proti sobě přes výzvy, přehled hráčů a jejich úkolů na klávese O, ✔ x/y nad hlavou, povinné jméno při startu hry), do své databáze `darek-30b0c` pod `mp/players`.
 - **Uživatel ho nechtěl** – multiplayer zůstává ten náš (`29_multiplayer.js`). Převzaté jsou jen novinky mimo online: `30_kvalita.js` (beze změn) a menu ☰ z jeho `29_online.js` (do `31_menu.js`, napojené na `mp.on` / `setOnline`). Při 22. 10. 2026 jeho online navíc nefungoval: pravidla jeho databáze povolovala jen n, r, x, y, c, t a odmítla zápis s q, qm, qd, qt a m.
 - Jeho kód výzev (`31_online_hry.js`, zprávy v poli `m` záznamu hráče, hostitel bílý / červení) se může hodit jako inspirace pro krok 3.
+
+## Bacha na Láďu (`js/39_horor.js`)
+
+Hororová **ukázka z první osoby** (uživatel chtěl zkusit horor s jumpscary a naháněčkami). Mód v 🎮 Módy, obrazovka `'horor'` (joystick funguje i tady – `05_stav_a_ovladani.js`, `setScreen`).
+
+- **Pohled:** raycasting jako ve Wolfensteinu. Z dílů `hlavni`, `zapad`, `vstup` spojené chodby se udělá mřížka po 10 px (`hororMap`: 0 volno, 1 zeď z `roomWalls`, 2 nábytek, 3 mimo hru – i průchody do jiných dílů, 4 dveře). Paprsek na každé 4 px šířky (`hororCast`, DDA), zdi okrové s červeným soklem a spárami, nábytek nižší a hnědý, dveře hnědé. Tma a **baterka** (kužel uprostřed, dosvit 430 px, `hororLightAt`), světlo bliká, když je Láďa blízko.
+- **Ovládání:** W S dopředu / dozadu, A D do stran, ← → / Q E nebo myš (zamčená po kliknutí, `requestPointerLock`) otáčení, Shift běh (dech 3,2 s). Mobil: joystick vlevo (naplno = běh), tažení prstem vpravo = otáčení. Esc = pauza (uvolnění myši taky).
+- **Láďa** (`TEACHERS.lada`, hlava z fotky, ve tmě svítí červené oči): chodí náhodně po chodbách (BFS po mřížce 20 px, `hororPath`); když tě vidí (nic mezi vámi, do 520 px, před sebou nebo blízko) nebo slyší běžet (260 px), **honí tě** rychleji, než chodíš (172 vs 120, běh 195); 4 s bez tebe → jde, kde tě viděl. Na 30 px tě chytí → **jumpscare** (jeho hlava přes celou obrazovku, třes, výkřik) → „LÁĎA TĚ CHYTIL!“ Zkusit znovu / Odejít.
+- **Cíl:** 3 svítící klíče (náhodná místa, 2 v západním křídle) a pak **hlavní vchod** dole ve vstupní chodbě. **Po 2. klíči** zhasne, zazní zvuk a Láďa se objeví za zády a honí (`hororScare`).
+- **Zvuky** se tvoří ve hře (Web Audio, `hororTone` / `hororNoise`): hučení, Láďovy kroky s hlasitostí a stranou podle polohy, tlukot srdce do 320 px, výkřik. Hudba hry je během módu vypnutá a pak se vrátí.
+- Ověřeno v prohlížeči: start, chůze, Láďa uvidí → honí → chytí → jumpscare, znovu, naháněčka po 2. klíči, 3 klíče → útěk → úvod s hudbou. Na mobilu zatím nezkoušeno.
+- Možná pokračování: víc chodeb / pater, skrývání ve skříňkách, textury z fotek, opravdové zvuky.
 
 ## Among Us (`js/36_among.js`)
 

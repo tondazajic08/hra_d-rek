@@ -153,7 +153,7 @@ function joyRelease() {
 
 window.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse') return;      // joystick jen pro dotyk
-  if (state.screen !== 'playing') return;     // v minihrách a menu se ťuká, nechodí
+  if (state.screen !== 'playing' && state.screen !== 'horor') return;     // v minihrách a menu se ťuká, nechodí (horor: 39_horor.js)
   const j = input.joy;
   if (j.active) return;                        // už jeden prst joystick drží
   if (e.clientX > window.innerWidth * CONFIG.JOY_ZONE_WIDTH) return; // pravá část volná pro budoucí tlačítka

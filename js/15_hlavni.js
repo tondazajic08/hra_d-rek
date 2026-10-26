@@ -45,6 +45,11 @@ function update(dt) {
     updatePingpong(dt);   // 32_pingpong.js
     return;
   }
+  if (state.screen === 'horor') {
+    state.time += dt;
+    updateHoror(dt);      // Bacha na Láďu – horor z první osoby (39_horor.js)
+    return;
+  }
   if (state.screen === 'skins') {
     state.time += dt;
     updateSkins(dt);      // Locker – výběr skinu (33_skiny.js)
@@ -68,6 +73,7 @@ function render() {
   else if (state.screen === 'foosball') renderFoosball();
   else if (state.screen === 'pingpong') renderPingpong();
   else if (state.screen === 'skins') renderSkins();
+  else if (state.screen === 'horor') renderHoror();
   else renderGame();
   if (state.screen === 'playing' && !amongOn()) { drawCatalog(); drawMap(); drawSongMenu(); drawPrankHud(); drawVrahOverlays(); drawStoryOverlays(); drawCatalogButton(); drawMapButton(); drawInventoryButton(); }
   drawMuteButton();
