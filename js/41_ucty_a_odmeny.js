@@ -167,15 +167,15 @@ function drawHororShop(H) {
 // =====================================================================
 // ÚČTY
 // =====================================================================
-const ACCT = { KEY: 'hra_darek_ucet_v1', SYNC: 'hra_darek_ucet_cas_v1', EVERY: 15, SKIP: ['hra_darek_jmeno_v1', 'hra_darek_online_v1', 'hra_darek_kvalita_v1', 'hra_darek_zvuk_vypnuty'] };
-const acct = { user: null, dirty: false, sendT: 5, busy: false, msg: '', msgT: 0, panel: null, checked: false };
+const ACCT = { KEY: 'hra_darek_ucet_v1', SYNC: 'hra_darek_ucet_cas_v1', LOGIN: 'hra_darek_ucet_login_v1', EVERY: 15, SKIP: ['hra_darek_ucet_login_v1', 'hra_darek_online_v1', 'hra_darek_kvalita_v1', 'hra_darek_zvuk_vypnuty'] };   // přezdívka (jmeno_v1) se ukládá i do účtu
+const acct = { user: null, dirty: false, sendT: 5, busy: false, msg: '', msgT: 0, panel: null, checked: false, form: null };
 try { const u = JSON.parse(storageGet(ACCT.KEY) || 'null'); if (u && u.n && u.k && u.h) acct.user = u; } catch (e) { acct.user = null; }
 function acctDirty() { acct.dirty = true; }
 {
   const _save = saveProgress;
   saveProgress = function () { _save(); acctDirty(); };
 }
-const acctNameKey = (n) => n.toLowerCase().replace(/[.#$[\]/\s]/g, '_').slice(0, 24);
+const acctNameKey = (full) => 'u' + acctSha256(`jmeno|${full.toLowerCase()}`).slice(0, 23);   // klíč účtu = otisk jména a příjmení (v databázi nejsou čitelně)
 const acctUrl = (p) => `${MP.DB_URL.replace(/\/+$/, '')}/${p}.json`;
 // SHA-256 (hex) – bez crypto.subtle, ať to jde i ze souboru na disku
 function acctSha256(str) {
@@ -248,73 +248,197 @@ function acctCheck() {
     else acctDirty();
   }).catch(() => {});
 }
-function acctLogin(name, pass) {
-  const key = acctNameKey(name), h = acctHash(key, pass);
+// Účet = jméno a příjmení (v databázi jen jako otisk SHA-256, ne čitelně) + heslo; ve hře se ukazuje přezdívka
+const acctFullName = (jmeno, prijmeni) => `${jmeno} ${prijmeni}`.normalize('NFC').trim().replace(/\s+/g, ' ');
+function acctLogin(full, pass, opts) {
+  const key = acctNameKey(full), h = acctHash(key, pass);
   acctNote('Přihlašuji…');
-  fetch(acctUrl(`ucty/${key}/${h}`)).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then((data) => {
-    if (!data || typeof data.d !== 'string') { acctNote('❌ Špatné jméno nebo heslo.'); return; }
-    acct.user = { n: name, k: key, h };
-    storageSet(ACCT.KEY, JSON.stringify(acct.user));
+  return fetch(acctUrl(`ucty/${key}/${h}`)).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then((data) => {
+    if (!data || typeof data.d !== 'string') { acctNote('❌ Špatné jméno, příjmení nebo heslo.'); return false; }
     acctApply(data);
-    acctSetName(name);
+    const nick = cleanPlayerName(storageGet(SPEEDRUN.NAME_KEY) || '') || full.split(' ')[0];
+    acct.user = { n: full, nick, k: key, h };
+    storageSet(ACCT.KEY, JSON.stringify(acct.user));
+    acctSetName(nick);
     acct.panel = null;
-    acctNote(`✅ Přihlášen jako ${name} – postup načten.`);
-  }).catch(() => acctNote('❌ Nejde se připojit (nebo nejsou nastavená pravidla databáze).'));
+    acctRemember(full, pass, nick, opts);
+    acctNote(`✅ Ahoj, ${nick}! Přihlášen – postup načten.`);
+    return true;
+  }).catch(() => { acctNote('❌ Nejde se připojit (nebo nejsou nastavená pravidla databáze).'); return false; });
 }
-function acctRegister(name, pass) {
-  const key = acctNameKey(name), h = acctHash(key, pass);
+function acctRegister(full, pass, nick, opts) {
+  const key = acctNameKey(full), h = acctHash(key, pass);
   acctNote('Zakládám účet…');
-  fetch(acctUrl(`jmena/${key}`)).then((r) => r.json()).then((taken) => {
-    if (taken) { acctNote('❌ Tohle jméno už někdo má. Zkus jiné.'); return null; }
+  return fetch(acctUrl(`jmena/${key}`)).then((r) => r.json()).then((taken) => {
+    if (taken) { acctNote('❌ Účet s tímhle jménem a příjmením už existuje – přihlas se.'); return false; }
     return fetch(acctUrl(`jmena/${key}`), { method: 'PUT', body: JSON.stringify({ t: { '.sv': 'timestamp' } }) }).then((r) => {
       if (!r.ok) throw new Error(r.status);
-      acct.user = { n: name, k: key, h };
+      acct.user = { n: full, nick, k: key, h };
       storageSet(ACCT.KEY, JSON.stringify(acct.user));
-      acctSetName(name);
+      acctSetName(nick);
       acct.panel = null;
-      acctUpload();   // současný postup se nahraje do účtu
-      acctNote(`✅ Účet ${name} založen – postup se bude ukládat.`);
+      acctUpload();   // současný postup (i přezdívka) se nahraje do účtu
+      acctRemember(full, pass, nick, opts);
+      acctNote(`✅ Účet založen – vítej, ${nick}! Postup se bude ukládat.`);
+      return true;
     });
-  }).catch(() => acctNote('❌ Nejde se připojit (nebo nejsou nastavená pravidla databáze).'));
+  }).catch(() => { acctNote('❌ Nejde se připojit (nebo nejsou nastavená pravidla databáze).'); return false; });
+}
+// Zapamatovat přihlašovací jméno (jen na tomhle zařízení) a nabídnout prohlížeči uložení hesla
+function acctRemember(full, pass, nick, opts) {
+  if (opts && opts.remember === false) storageRemove(ACCT.LOGIN);
+  else storageSet(ACCT.LOGIN, full);
+  try {
+    if (window.PasswordCredential && navigator.credentials && navigator.credentials.store) navigator.credentials.store(new window.PasswordCredential({ id: full, password: pass, name: nick })).catch(() => {});
+  } catch (e) { /* prohlížeč to neumí – uloží si to z formuláře sám */ }
 }
 function acctSetName(name) {
   const n = cleanPlayerName(name);
   if (!n) return;
   mp.name = n;
   storageSet(SPEEDRUN.NAME_KEY, n);
+  if (acct.user) { acct.user.nick = n; storageSet(ACCT.KEY, JSON.stringify(acct.user)); acctDirty(); }
 }
 function acctLogout() {
   if (acct.dirty) acctUpload();
   acct.user = null;
   storageRemove(ACCT.KEY);
   acct.panel = null;
+  try { if (navigator.credentials && navigator.credentials.preventSilentAccess) navigator.credentials.preventSilentAccess(); } catch (e) { /* nevadí */ }
   acctNote('Odhlášeno – hraješ bez účtu (postup zůstal i na tomhle zařízení).');
 }
-const acctAsk = (text, def) => { const v = window.prompt(text, def || ''); return v === null ? null : v.trim(); };
-function acctDoLogin(create) {
-  const name = acctAsk(create ? `Jméno nového účtu (max ${SPEEDRUN.NAME_MAX} znaků):` : 'Jméno účtu:', mp.name);
-  if (!name) return;
-  if (cleanPlayerName(name) !== name.slice(0, SPEEDRUN.NAME_MAX) || name.length > SPEEDRUN.NAME_MAX) { acctNote(`❌ Jméno může mít max ${SPEEDRUN.NAME_MAX} znaků.`); return; }
-  const pass = acctAsk(create ? 'Vymysli heslo (aspoň 4 znaky, nepoužívej heslo odjinud):' : 'Heslo:');
-  if (!pass) return;
-  if (pass.length < 4) { acctNote('❌ Heslo musí mít aspoň 4 znaky.'); return; }
-  if (create) {
-    const again = acctAsk('Napiš heslo ještě jednou:');
-    if (again !== pass) { acctNote('❌ Hesla se neshodují.'); return; }
-    acctRegister(name, pass);
-  } else acctLogin(name, pass);
+
+// --- Formulář (HTML nad hrou): přihlášení / nový účet / přezdívka ---
+// Skutečný <form> s autocomplete, ať si prohlížeč umí jméno a heslo uložit a příště vyplnit.
+const ACCT_CSS = `
+#ucetForm{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:50;font-family:sans-serif}
+#ucetForm form{background:#1d2333;border:3px solid #4fc3f7;border-radius:16px;padding:18px 20px;width:min(360px,92vw);color:#fff;box-sizing:border-box;max-height:96vh;overflow:auto}
+#ucetForm h2{margin:0 0 4px;text-align:center;color:#4fc3f7;font-size:22px}
+#ucetForm p{margin:0 0 10px;text-align:center;color:#c9d3e8;font-size:13px}
+#ucetForm label{display:block;font-size:13px;color:#c9d3e8;margin:8px 0 3px}
+#ucetForm input[type=text],#ucetForm input[type=password]{width:100%;box-sizing:border-box;font-size:16px;padding:9px 10px;border-radius:8px;border:2px solid #3a4560;background:#0f1422;color:#fff}
+#ucetForm input:focus{outline:none;border-color:#4fc3f7}
+#ucetForm .pw{position:relative}#ucetForm .pw input{padding-right:44px}
+#ucetForm .eye{position:absolute;right:4px;top:4px;width:36px;height:34px;border:0;background:none;font-size:18px;cursor:pointer;color:#c9d3e8}
+#ucetForm .row{display:flex;gap:8px}#ucetForm .row>div{flex:1}
+#ucetForm .chk{display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:14px;color:#e0e6f5}
+#ucetForm .chk input{width:18px;height:18px}
+#ucetForm .err{color:#ff8a80;font-size:13px;min-height:18px;margin-top:8px;text-align:center}
+#ucetForm .btns{display:flex;gap:8px;margin-top:10px}
+#ucetForm button.go,#ucetForm button.back{flex:1;font-size:16px;font-weight:bold;padding:10px;border-radius:10px;border:0;cursor:pointer}
+#ucetForm button.go{background:#ffd54a;color:#222}#ucetForm button.back{background:#5a4636;color:#fff}
+#ucetForm a{color:#4fc3f7;cursor:pointer;text-decoration:underline}
+#ucetForm .switch{text-align:center;font-size:13px;margin-top:10px;color:#c9d3e8}
+#ucetForm .hide{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}`;
+function acctFormClose() {
+  const el = document.getElementById('ucetForm');
+  if (el) el.remove();
+  acct.form = null;
+}
+// mode: 'login' | 'register' | 'nick'
+function acctFormOpen(mode) {
+  acctFormClose();
+  acct.panel = null;
+  if (!document.getElementById('ucetCss')) { const st = document.createElement('style'); st.id = 'ucetCss'; st.textContent = ACCT_CSS; document.head.appendChild(st); }
+  const last = storageGet(ACCT.LOGIN) || '', sp = last.indexOf(' '), lj = sp > 0 ? last.slice(0, sp) : last, lp = sp > 0 ? last.slice(sp + 1) : '';
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const pw = (id, ac, label) => `<label for="${id}">${label}</label><div class="pw"><input type="password" id="${id}" name="${id === 'uHeslo' ? 'password' : id}" autocomplete="${ac}" required minlength="6"><button type="button" class="eye" data-for="${id}" title="Ukázat heslo">👁</button></div>`;
+  const names = `<div class="row"><div><label for="uJmeno">Jméno</label><input type="text" id="uJmeno" name="given-name" autocomplete="given-name" required value="${esc(lj)}"></div>
+    <div><label for="uPrijmeni">Příjmení</label><input type="text" id="uPrijmeni" name="family-name" autocomplete="family-name" required value="${esc(lp)}"></div></div>
+    <input type="text" class="hide" id="uLogin" name="username" autocomplete="username" tabindex="-1" value="${esc(last)}">`;
+  const remember = `<label class="chk"><input type="checkbox" id="uPamatuj" ${storageGet(ACCT.LOGIN) !== null || !last ? 'checked' : ''}> Zapamatovat přihlašovací jméno</label>`;
+  let html;
+  if (mode === 'login') {
+    html = `<h2>🔑 Přihlášení</h2><p>Přihlas se svým jménem, příjmením a heslem</p>${names}${pw('uHeslo', 'current-password', 'Heslo')}${remember}
+      <div class="err" id="uErr"></div><div class="btns"><button type="button" class="back">Zpět</button><button type="submit" class="go">Přihlásit</button></div>
+      <div class="switch">Nemáš účet? <a data-go="register">Založ si ho</a></div>`;
+  } else if (mode === 'register') {
+    html = `<h2>➕ Nový účet</h2><p>Postup se ti bude ukládat a načte se i na jiném zařízení</p>${names}
+      <label for="uNick">Přezdívka (uvidí ji ostatní hráči)</label><input type="text" id="uNick" name="nickname" autocomplete="nickname" required maxlength="${SPEEDRUN.NAME_MAX}" value="${esc(mp.name || '')}">
+      ${pw('uHeslo', 'new-password', 'Heslo (aspoň 6 znaků, nepoužívej heslo odjinud)')}${pw('uHeslo2', 'new-password', 'Heslo znovu')}${remember}
+      <div class="err" id="uErr"></div><div class="btns"><button type="button" class="back">Zpět</button><button type="submit" class="go">Založit účet</button></div>
+      <div class="switch">Už máš účet? <a data-go="login">Přihlas se</a></div>`;
+  } else {
+    html = `<h2>✏ Přezdívka</h2><p>${acct.user ? 'Jak tě uvidí ostatní hráči' : 'Hraješ bez účtu – postup se pamatuje jen na tomhle zařízení'}</p>
+      <label for="uNick">Přezdívka</label><input type="text" id="uNick" name="nickname" autocomplete="nickname" required maxlength="${SPEEDRUN.NAME_MAX}" value="${esc(mp.name || '')}">
+      <div class="err" id="uErr"></div><div class="btns"><button type="button" class="back">Zpět</button><button type="submit" class="go">Uložit</button></div>`;
+  }
+  const wrap = document.createElement('div');
+  wrap.id = 'ucetForm';
+  wrap.innerHTML = `<form autocomplete="on" novalidate>${html}</form>`;
+  document.body.appendChild(wrap);
+  acct.form = mode;
+  input.keys.clear(); input.events.length = 0;
+  const $ = (id) => wrap.querySelector(`#${id}`), err = (t) => { $('uErr').textContent = t; };
+  // ať hra nereaguje na psaní a klikání ve formuláři
+  for (const ev of ['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click', 'wheel']) wrap.addEventListener(ev, (e) => e.stopPropagation());
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); acctFormClose(); } });
+  wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) acctFormClose(); });
+  wrap.querySelector('.back').addEventListener('click', () => { acctFormClose(); acctOpen(); });
+  wrap.querySelectorAll('a[data-go]').forEach((a) => a.addEventListener('click', () => acctFormOpen(a.dataset.go)));
+  wrap.querySelectorAll('.eye').forEach((b) => b.addEventListener('click', () => { const i = $(b.dataset.for); i.type = i.type === 'password' ? 'text' : 'password'; b.textContent = i.type === 'password' ? '👁' : '🙈'; }));
+  // skryté pole „username“ pro správce hesel: jméno + příjmení dohromady (a naopak, když ho prohlížeč vyplní)
+  const login = $('uLogin');
+  if (login) {
+    const sync = () => { login.value = acctFullName($('uJmeno').value, $('uPrijmeni').value); };
+    $('uJmeno').addEventListener('input', sync); $('uPrijmeni').addEventListener('input', sync);
+    login.addEventListener('change', () => { const v = login.value.trim(), k = v.indexOf(' '); if (v) { $('uJmeno').value = k > 0 ? v.slice(0, k) : v; $('uPrijmeni').value = k > 0 ? v.slice(k + 1) : ''; } });
+  }
+  // přihlášení uložené v prohlížeči (Chrome a další): rovnou vyplnit
+  if (mode === 'login' && window.PasswordCredential && navigator.credentials && navigator.credentials.get) {
+    navigator.credentials.get({ password: true, mediation: 'optional' }).then((c) => {
+      if (!c || !c.password || acct.form !== 'login') return;
+      const v = c.id, k = v.indexOf(' ');
+      $('uJmeno').value = k > 0 ? v.slice(0, k) : v; $('uPrijmeni').value = k > 0 ? v.slice(k + 1) : ''; $('uHeslo').value = c.password; login.value = v;
+    }).catch(() => {});
+  }
+  setTimeout(() => { const f = mode === 'nick' ? $('uNick') : (!$('uJmeno').value ? $('uJmeno') : !$('uPrijmeni').value ? $('uPrijmeni') : mode === 'register' ? $('uNick') : $('uHeslo')); if (f) f.focus(); }, 30);
+  wrap.querySelector('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (mode === 'nick') {
+      const n = cleanPlayerName($('uNick').value);
+      if (!n) { err('Napiš přezdívku.'); return; }
+      acctSetName(n); acctFormClose(); acctNote(`✏ Přezdívka: ${n}`);
+      return;
+    }
+    const j = $('uJmeno').value.trim(), pr = $('uPrijmeni').value.trim(), pass = $('uHeslo').value;
+    if (!j || !pr) { err('Vyplň jméno i příjmení.'); return; }
+    if (pass.length < 6) { err('Heslo musí mít aspoň 6 znaků.'); return; }
+    const full = acctFullName(j, pr), opts = { remember: $('uPamatuj').checked };
+    login.value = full;
+    let job;
+    if (mode === 'register') {
+      const nick = cleanPlayerName($('uNick').value);
+      if (!nick) { err('Vymysli si přezdívku.'); return; }
+      if (pass !== $('uHeslo2').value) { err('Hesla se neshodují.'); return; }
+      job = acctRegister(full, pass, nick, opts);
+    } else job = acctLogin(full, pass, opts);
+    const go = wrap.querySelector('.go');
+    go.disabled = true; err('');
+    job.then((ok) => {
+      if (ok) acctFormClose();   // formulář zmizí = prohlížeč nabídne uložení hesla
+      else { go.disabled = false; err(acct.msg.replace(/^❌ /, '')); }
+    });
+  });
+}
+// Dokud je formulář otevřený, hra nedostane klávesy ani ťuknutí mimo něj (psaní do políček funguje normálně)
+for (const ev of ['keydown', 'keyup', 'pointerdown', 'mousedown', 'touchstart']) {
+  window.addEventListener(ev, (e) => {
+    if (!acct.form) return;
+    if (!(e.target && e.target.closest && e.target.closest('#ucetForm'))) e.stopImmediatePropagation();
+  }, true);
 }
 // --- Okno účtu na úvodu (tlačítko 👤 se jménem) ---
-const ACCT_PANEL = { x: 200, y: 130, w: 400, h: 340 };
+const ACCT_PANEL = { x: 200, y: 120, w: 400, h: 360 };
 const acctItems = () => (acct.user
-  ? [{ id: 'save', label: '☁ Uložit postup teď' }, { id: 'out', label: 'Odhlásit se' }, { id: 'close', label: 'Zavřít' }]
-  : [{ id: 'login', label: '🔑 Přihlásit se' }, { id: 'new', label: '➕ Založit účet' }, { id: 'name', label: '✏ Hrát bez účtu – jen jméno' }, { id: 'close', label: 'Zavřít' }]);
-const acctRow = (i) => ({ x: 240, y: 230 + i * 52, w: 320, h: 44 });
+  ? [{ id: 'nick', label: '✏ Změnit přezdívku' }, { id: 'save', label: '☁ Uložit postup teď' }, { id: 'out', label: 'Odhlásit se' }, { id: 'close', label: 'Zavřít' }]
+  : [{ id: 'login', label: '🔑 Přihlásit se' }, { id: 'new', label: '➕ Založit účet' }, { id: 'nick', label: '✏ Hrát bez účtu – jen přezdívka' }, { id: 'close', label: 'Zavřít' }]);
+const acctRow = (i) => ({ x: 240, y: 222 + i * 52, w: 320, h: 44 });
 function acctOpen() { acct.panel = { sel: 0 }; }
 function acctAction(id) {
-  if (id === 'login') acctDoLogin(false);
-  else if (id === 'new') acctDoLogin(true);
-  else if (id === 'name') { changePlayerName(); acct.panel = null; }
+  if (id === 'login') acctFormOpen('login');
+  else if (id === 'new') acctFormOpen('register');
+  else if (id === 'nick') acctFormOpen('nick');
   else if (id === 'save') { acctUpload(); acctNote('☁ Ukládám…'); }
   else if (id === 'out') acctLogout();
   else acct.panel = null;
@@ -348,7 +472,8 @@ function drawAccountPanel() {
   roundRectPath(A.x, A.y, A.w, A.h, 16);
   ctx.fillStyle = '#1d2333'; ctx.fill(); ctx.strokeStyle = '#4fc3f7'; ctx.lineWidth = 3; ctx.stroke();
   drawOutlinedText('👤 Účet', 400, A.y + 34, 'bold 26px sans-serif', '#4fc3f7', 'middle');
-  drawOutlinedText(acct.user ? `Přihlášen: ${acct.user.n} – postup se ukládá na server` : 'Bez účtu se postup pamatuje jen na tomhle zařízení', 400, A.y + 70, 'bold 13px sans-serif', '#c9d3e8', 'middle', A.w - 30);
+  drawOutlinedText(acct.user ? `Přihlášen: ${acct.user.nick || acct.user.n} (${acct.user.n})` : 'Bez účtu se postup pamatuje jen na tomhle zařízení', 400, A.y + 66, 'bold 13px sans-serif', '#c9d3e8', 'middle', A.w - 30);
+  if (acct.user) drawOutlinedText('Postup se ukládá na server', 400, A.y + 86, '12px sans-serif', '#9fb3c8', 'middle');
   items.forEach((it, i) => drawChessButton(acctRow(i), it.label, i === acct.panel.sel, it.id === 'close' ? '#5a4636' : it.id === 'out' ? '#7a2a2a' : '#2f5a7a'));
 }
 // Tlačítko se jménem na úvodu otevře okno účtu (29_multiplayer.js) a ukáže, kdo je přihlášený
@@ -371,7 +496,7 @@ function drawAccountPanel() {
     roundRectPath(nb.x, nb.y, nb.w, nb.h, 6);
     ctx.fillStyle = acct.user ? 'rgba(21, 101, 192, 0.95)' : 'rgba(40, 40, 40, 0.95)'; ctx.fill();
     ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
-    ctx.fillText(acct.user ? `👤 ${acct.user.n} ✔ účet` : mp.name ? `👤 ${mp.name} · účet` : '👤 Účet / jméno', nb.x + 8, nb.y + nb.h / 2 + 1, nb.w - 14);
+    ctx.fillText(acct.user ? `👤 ${acct.user.nick || mp.name} ✔ účet` : mp.name ? `👤 ${mp.name} · přihlásit` : '👤 Přihlásit / účet', nb.x + 8, nb.y + nb.h / 2 + 1, nb.w - 14);
   };
 }
 // Každý krok (15_hlavni.js): ukládání na server, když se něco změnilo
