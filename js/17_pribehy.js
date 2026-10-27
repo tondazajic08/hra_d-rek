@@ -13,7 +13,7 @@
 //   coffee       – kolik sekund ještě působí káva (rychlejší chůze)
 // =====================================================================
 function newStory() {
-  return { wallet: 0, chanKept: 0, chanSpent: 0, motorka: false, headphones: false, energy: 100, coffee: 0 };
+  return { wallet: 0, chanKept: 0, chanSpent: 0, motorka: false, headphones: false, energy: 100, coffee: 0, wc: 0 };
 }
 state.story = newStory();
 state.inventory = null;   // otevřený inventář (E)
@@ -281,20 +281,21 @@ function inventoryEvents(events) {
 // HLAD – energie pomalu klesá (z plna na nulu asi za 25 minut hraní). Hladový Roman
 // chodí pomaleji, jídlo z inventáře energii doplní, káva na chvíli zrychlí.
 // =====================================================================
-const HUNGER = { DRAIN: 100 / 1500,   // z plna na nulu za 25 minut hraní
+const HUNGER = { DRAIN: 100 / 600,   // z plna na nulu za 10 minut hraní (dřív 25)
   LOW: 30, SLOW: 0.75, STARVING: 0.55, COFFEE_TIME: 45, COFFEE_SPEED: 1.3 };
 // Kolik jídlo doplní (podle ceny) a co Roman řekne
 function foodOf(name) {
   const n = name.toLowerCase();
-  if (n.includes('párek')) return { energy: 35, line: 'Párek v rohlíku – klasika, co nikdy nezklame.' };
-  if (n.includes('sekaná')) return { energy: 55, line: 'Sekaná v housce. Teď vydržím do večera!' };
-  if (n.includes('lívance')) return { energy: 45, line: 'Americké lívance. Sladký život.' };
-  if (n.includes('slaninou')) return { energy: 35, line: 'Toast se slaninou. Křupe to!' };
-  if (n.includes('toast')) return { energy: 40, line: 'Toast se šunkou. Poctivá svačina.' };
-  if (n.includes('quesadilla')) return { energy: 45, line: 'Quesadilla. ¡Muy bien!' };
-  if (n.includes('čokoláda')) return { energy: 20, line: 'Horká čokoláda. Hned je líp.' };
-  if (n.includes('čaj')) return { energy: 15, line: 'Čaj. Zahřeje, ale moc nezasytí.' };
-  return { energy: 10, coffee: true, line: 'Káva! Teď to pofrčí.' };
+  // wc = o kolik se naplní záchodový ukazatel (💩, max 100)
+  if (n.includes('párek')) return { energy: 35, wc: 22, line: 'Párek v rohlíku – klasika, co nikdy nezklame.' };
+  if (n.includes('sekaná')) return { energy: 55, wc: 32, line: 'Sekaná v housce. Teď vydržím do večera!' };
+  if (n.includes('lívance')) return { energy: 45, wc: 26, line: 'Americké lívance. Sladký život.' };
+  if (n.includes('slaninou')) return { energy: 35, wc: 24, line: 'Toast se slaninou. Křupe to!' };
+  if (n.includes('toast')) return { energy: 40, wc: 22, line: 'Toast se šunkou. Poctivá svačina.' };
+  if (n.includes('quesadilla')) return { energy: 45, wc: 28, line: 'Quesadilla. ¡Muy bien!' };
+  if (n.includes('čokoláda')) return { energy: 20, wc: 18, line: 'Horká čokoláda. Hned je líp.' };
+  if (n.includes('čaj')) return { energy: 15, wc: 20, line: 'Čaj. Zahřeje, ale moc nezasytí.' };
+  return { energy: 10, wc: 16, coffee: true, line: 'Káva! Teď to pofrčí.' };
 }
 function eatFood(name) {
   const i = state.bag.indexOf(name);
@@ -305,14 +306,36 @@ function eatFood(name) {
   if (f.coffee) s.coffee = HUNGER.COFFEE_TIME;
   s.hungryToast = 0;
   playSound([[392, 0, 0.06], [523, 0.07, 0.06], [659, 0.14, 0.1]]);
-  const line = f.line;
-  state.toast = { text: `😋 ${line} (+${f.energy} energie${f.coffee ? ', zrychlení' : ''})`, t: CONFIG.TOAST_TIME + 1 };
+  const line = f.line, wcBefore = s.wc || 0;
+  s.wc = wcBefore + (f.wc || 0);
+  state.toast = { text: `😋 ${line} (+${f.energy} energie${f.coffee ? ', zrychlení' : ''}, 💩 +${f.wc || 0})`, t: CONFIG.TOAST_TIME + 1 };
+  if (s.wc >= WC.MAX) { toiletDeath(); return; }
+  if (wcBefore < WC.WARN && s.wc >= WC.WARN) state.toast = { text: `😣 ${line} …ale Romanovi se chce na záchod! Najdi WC (💩 ${Math.round(s.wc)} / ${WC.MAX}).`, t: CONFIG.TOAST_TIME + 3 };
   const left = inventoryItems().length;
   if (state.inventory) state.inventory.sel = Math.min(state.inventory.sel, Math.max(0, left - 1));
   saveProgress();
 }
+// ZÁCHOD (💩): jídlo a pití ukazatel plní (podle toho, co Roman sní – foodOf wc), na WC se vyprázdní.
+// Když dojde na MAX, Roman to nevydrží: objeví se na začátku a zaplatí 250 Kč (peníze můžou do mínusu).
+const WC = { MAX: 100, WARN: 70, EMPTY: 45, FINE: 250 };
+function toiletDeath() {
+  const s = state.story;
+  s.wc = 0;
+  state.money -= WC.FINE;
+  state.inventory = null; state.dialog = null;
+  playSound([[220, 0, 0.2], [165, 0.22, 0.3], [110, 0.55, 0.5]], 'sawtooth');
+  enterStartRoom();   // zpátky na začátek (33_skiny.js)
+  state.toast = { text: `💩 Roman to nevydržel… Je zpátky na začátku a stálo ho to ${WC.FINE} Kč (má ${state.money} Kč).`, t: CONFIG.TOAST_TIME + 4 };
+  saveProgress();
+}
 function updateHunger(dt) {
   const s = state.story, before = s.energy;
+  s.wc = s.wc || 0;
+  if (s.wc > 0 && state.room && state.room.id.startsWith('wc')) {   // na záchodě se uleví
+    s.wc = Math.max(0, s.wc - WC.EMPTY * dt);
+    if (!s.wcToast) { s.wcToast = 1; state.toast = { text: '🚽 Uf… ulevilo se.', t: CONFIG.TOAST_TIME }; }
+    if (!s.wc) saveProgress();
+  } else s.wcToast = 0;
   s.energy = Math.max(0, s.energy - HUNGER.DRAIN * dt);
   s.coffee = Math.max(0, s.coffee - dt);
   updateTabak(dt);
@@ -347,6 +370,17 @@ function drawEnergyBar() {
   if (k > 0) {
     roundRectPath(bx, y + 4, Math.max(6, bw * k), h - 8, 4);
     ctx.fillStyle = s.energy < HUNGER.LOW ? (Math.sin(state.time * 6) > 0 ? '#e53935' : '#b71c1c') : s.energy < 60 ? '#fbc02d' : '#43a047';
+    ctx.fill();
+  }
+  // záchod (💩): pod hladem, hnědý, u konce bliká
+  const y2 = y + h + 3, wc = Math.min(1, (s.wc || 0) / WC.MAX);
+  roundRectPath(x, y2, w, h, 6);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.fillText('💩', x + 5, y2 + h / 2 + 1);
+  roundRectPath(bx, y2 + 4, bw, h - 8, 4); ctx.fillStyle = '#263238'; ctx.fill();
+  if (wc > 0) {
+    roundRectPath(bx, y2 + 4, Math.max(6, bw * wc), h - 8, 4);
+    ctx.fillStyle = wc >= 0.9 ? (Math.sin(state.time * 8) > 0 ? '#e53935' : '#6d4c41') : wc >= WC.WARN / WC.MAX ? '#a1662f' : '#8d6e63';
     ctx.fill();
   }
 }

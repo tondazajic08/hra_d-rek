@@ -9,6 +9,8 @@ function update(dt) {
   updateVoice();           // hlasový chat (34_hlas.js)
   updateDuel(dt);          // online zápasy: výzvy a síť (35_online_hry.js)
   takeDuelTaps();          // okno s výzvou: Přijmout / Odmítnout
+  updateAccount(dt);       // účet: ukládání postupu na server (41_ucty_a_odmeny.js)
+  takeAccountTaps();       // okno účtu na úvodu
   takeOnlineTaps();        // tlačítko Online a jméno na úvodu
   takeQualityTaps();       // úvod: tlačítko Kvalita (30_kvalita.js)
   takeMenuButtonTaps();    // ve hře: tlačítko ☰ Hlavní menu (31_menu.js)
@@ -94,6 +96,7 @@ function render() {
   drawAmongPick();     // Among Us: seznam her (36_among.js)
   drawPauseMenu();     // Pozastaveno / Hlavní menu (31_menu.js)
   drawLeaderboard();   // okno žebříčku
+  drawAccountPanel();  // 👤 účet (41_ucty_a_odmeny.js)
 }
 
 // =====================================================================

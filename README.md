@@ -77,6 +77,7 @@ js/37_among_ukoly.js  Among Us: úkoly (testy z předmětů po 50 otázkách, ry
 js/38_among_extra.js  Among Us: třídy na mapách, venty, sabotáže (světla, dveře), barvy hráčů
 js/39_horor.js        Bacha na Láďu – horor z první osoby po celé škole (raycasting se schody, nábytek jako 3D krabice), Láďa honí, úkryty, klíče, šuplíky a baterky
 js/40_horor_online.js Bacha na Láďu online – seznam her, čekárna (max 4), hostitel řídí Láďu, půjčování baterek
+js/41_ucty_a_odmeny.js Účty (přihlášení, postup na serveru), peníze za výhry v módech, ⭐ vylepšení do hororu
 js/15_hlavni.js       update/render podle obrazovky, herní smyčka, START (musí být poslední)
 obrazky/              hlavy 48 × 48 px: hrac.png, mala.png, krivacek.png, rauscher.png, holub.png, soumar.png, lencova.png, vesela.png, mraz.png …
 zvuky/                hudba: pozadí/ = hudba na pozadí (CONFIG.MUSIC_PLAYLIST), „Treplev.mp3“ (v C202 u Kluse), „fotbálek.mp3“ (u fotbálku), Mykyta/ = písničky od Mykyho
@@ -605,6 +606,14 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - Kamarád (`robkojabko/darek_v2`) má ve větvi `mptest` vlastní online: `29_online.js` + `31_online_hry.js` (šachy a fotbálek proti sobě přes výzvy, přehled hráčů a jejich úkolů na klávese O, ✔ x/y nad hlavou, povinné jméno při startu hry), do své databáze `darek-30b0c` pod `mp/players`.
 - **Uživatel ho nechtěl** – multiplayer zůstává ten náš (`29_multiplayer.js`). Převzaté jsou jen novinky mimo online: `30_kvalita.js` (beze změn) a menu ☰ z jeho `29_online.js` (do `31_menu.js`, napojené na `mp.on` / `setOnline`). Při 22. 10. 2026 jeho online navíc nefungoval: pravidla jeho databáze povolovala jen n, r, x, y, c, t a odmítla zápis s q, qm, qd, qt a m.
 - Jeho kód výzev (`31_online_hry.js`, zprávy v poli `m` záznamu hráče, hostitel bílý / červení) se může hodit jako inspirace pro krok 3.
+
+## Účty, odměny, vylepšení, záchod (`js/41_ucty_a_odmeny.js`, `17_pribehy.js`)
+
+- **Účet** (úvod → tlačítko 👤 se jménem): Přihlásit se / Založit účet / Hrát bez účtu (jen jméno). Jméno a heslo přes `window.prompt`. Databáze: `jmena/<klíč jména>` = { t } (obsazené jméno, nejde přepsat), `ucty/<klíč jména>/<SHA-256(„darek|jméno|heslo“)>` = { d: JSON všech `hra_darek*` z localStorage kromě nastavení zařízení, t }. Číst jde jen s klíčem (pravidla nedovolí vypsat `ucty/<jméno>`). Postup se nahrává 15 s po změně (`saveProgress` obalený → `acctDirty`) a při zavření stránky; po startu se načte novější postup ze serveru (`acctCheck`). SHA-256 je v JS (`acctSha256`), funguje i ze souboru. **Pravidla `jmena` a `ucty` musí uživatel publikovat** (`tools/firebase_pravidla_multiplayer.json`).
+- **Peníze z módů** jdou do peněz hlavní hry (`mainMoneyAdd` upraví uložení `CONFIG.SAVE_KEY`): útěk v hororu +250 (sám i online), Vrah z C109 +50 (konec příběhu), Among Us +25 (výhra). Nová hra si peníze nechá (obalený `startPlaying`). Peníze můžou být v mínusu.
+- **⭐ Vylepšení postavy** (úvod hororu): rychlost, výdrž, baterka, světlo, tichý krok, náhradní baterka na start (`HOROR_UPS`, uložené v `hra_darek_horor_v1`, `H.up`, `H.bonusSp`).
+- **Hlad** klesá rychleji (z plna na nulu za 10 min). **💩 Záchod** (ukazatel pod hladem): jídlo a pití ho plní podle `foodOf(...).wc` (sekaná 32 … káva 16), na WC (místnosti `wc*`) se vyprázdní, na 100 Roman „umře“: zpátky na začátek (`enterStartRoom`) a −250 Kč (`toiletDeath`, `WC`).
+- **Horor:** víc úkrytů (skříňky, pod katedrou / stolem, pod pingpongem, klavírem, lavičkou, za laboratorním stolem – `HOROR_FURNITURE`, 109 úkrytů; pod nábytkem je vidět jen škvírou u země). E = šuplík, F = schovat (na mobilu dvě tlačítka). Šuplík: čelo s mosaznou úchytkou, plynule se vysune (`H.anim`, `hororDrawerK`), boky, dno, tmavé vnitřky, hláška „Prázdný šuplík…“ / „V šuplíku je baterka!“.
 
 ## Bacha na Láďu (`js/39_horor.js`)
 

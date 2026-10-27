@@ -61,6 +61,27 @@
         "$other": { ".validate": false }
       }
     },
+    "jmena": {
+      ".read": true,
+      "$n": {
+        ".write": "$n.length < 25 && !data.exists()",
+        ".validate": "newData.hasChildren(['t'])",
+        "t": { ".validate": "newData.val() === now" },
+        "$other": { ".validate": false }
+      }
+    },
+    "ucty": {
+      "$n": {
+        "$k": {
+          ".read": "$k.length === 64",
+          ".write": "$n.length < 25 && $k.length === 64 && root.child('jmena').child($n).exists()",
+          ".validate": "newData.hasChildren(['d', 't'])",
+          "d": { ".validate": "newData.isString() && newData.val().length < 100001" },
+          "t": { ".validate": "newData.val() === now" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
     "zapasy": {
       ".read": true,
       "$m": {

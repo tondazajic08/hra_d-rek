@@ -262,7 +262,10 @@ function finale() {
       playSound(CONFIG.SOUND_COMPLETE);
     } },
     { who: B(), text: 'Romane, tady máš Ferdinanda II. Zalévej ho. Dvanáct let, ať to vidím.' },
-  ], () => { setVrahStage('konec'); setQuestStage(questById('vrah'), 'done'); });
+  ], () => {
+    setVrahStage('konec'); setQuestStage(questById('vrah'), 'done');
+    if (typeof mainMoneyAdd === 'function') { mainMoneyAdd(50); state.toast = { text: '💰 Vrah dopaden! +50 Kč do hlavní hry', t: CONFIG.TOAST_TIME + 2 }; }   // odměna (41_ucty_a_odmeny.js)
+  });
 }
 // Po přesunu postavy do místnosti, kde hráč je: přepočítat, kdo je vidět a co je pevné
 function refreshRoom() {

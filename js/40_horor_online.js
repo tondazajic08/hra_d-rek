@@ -162,6 +162,7 @@ function hororApplyS(H, S) {
     hororDrone(false);
     if (document.pointerLockElement) document.exitPointerLock();
     if (S.st === 'win') { hororTone(523, 0.2, 'triangle', 0.3); hororTone(784, 0.4, 'triangle', 0.3, 0, 0, 0.2); } else hororScream();
+    if (S.st === 'win' && H.net.paid !== S.k && typeof mainMoneyAdd === 'function') { H.net.paid = S.k; mainMoneyAdd(250); H.reward = 250; }   // odměna (41_ucty_a_odmeny.js)
   }
 }
 function hororToLobby(H) {
@@ -359,7 +360,7 @@ function drawHororNet(H) {
     ctx.fillStyle = win ? 'rgba(0, 20, 10, 0.9)' : 'rgba(30, 0, 0, 0.92)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, CONFIG.HEIGHT);
     drawOutlinedText(win ? 'UTEKLI JSTE! 🎉' : 'LÁĎA VÁS CHYTIL VŠECHNY!', W / 2, 210, 'bold 44px sans-serif', win ? '#7ee08a' : '#ff4d4d', 'middle');
     if (win) drawOutlinedText(`Ven proběhl(a): ${H.winBy === mp.id ? 'ty' : amongName(H.winBy)}`, W / 2, 262, 'bold 18px sans-serif', '#ffffff', 'middle');
-    drawOutlinedText(`Klíče: ${H.got}/${HOROR.KEYS}`, W / 2, 290, 'bold 16px sans-serif', '#e0e0e0', 'middle');
+    drawOutlinedText(`Klíče: ${H.got}/${HOROR.KEYS}${win && H.reward ? `   💰 +${H.reward} Kč` : ''}`, W / 2, 290, 'bold 16px sans-serif', '#e0e0e0', 'middle');
     if (H.endT >= 1.2) chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? 'Zpět do čekárny' : 'Odejít', i === H.overSel));
   }
   if (net.note) drawOutlinedText(net.note, 400, HN_PANEL.y + HN_PANEL.h + 18, 'bold 15px sans-serif', '#ff8a80', 'middle');

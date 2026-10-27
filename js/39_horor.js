@@ -77,7 +77,11 @@ function hororStyle(roomId, part) {
 // Úkryty (podle druhu nábytku z mapy hry)
 const HOROR_FURNITURE = {
   stage: { hide: 'pod pódiem' }, wardrobe: { hide: 've skříni' }, stall: { hide: 'v záchodové kabince' },
+  lockers: { hide: 've skříňce' }, desk: { hide: 'pod katedrou' }, pingpong: { hide: 'pod pingpongovým stolem' },
+  piano: { hide: 'pod klavírem' }, bench: { hide: 'pod lavičkou' }, roundtable: { hide: 'pod stolem' }, pcdesk: { hide: 'pod stolem s počítači' },
+  labbench: { hide: 'za laboratorním stolem' }, chembench: { hide: 'za laboratorním stolem' },
 };
+const HOROR_HIDE_IN = ['wardrobe', 'lockers', 'stall'];   // uvnitř (škvíra mezi dvířky); ostatní = pod / za nábytkem
 // Nábytek ve 3D: každý kus z mapy hry (room.obstacles, kresba OBSTACLE_ART v 08_grafika_mistnosti.js) se
 // poskládá z krabic { x, y, w, h (px mapy), z0, z1 (výška nad podlahou), c (barva), s (stojí na zemi a zakrývá) }.
 // Stejné barvy a rozložení jako shora ve hře: deska stolu a nohy, židle se sedákem a opěradlem, monitory,
@@ -448,7 +452,7 @@ function hororMap(roomId) {
     }
     cells(o.rect, (c) => { if (g[c] !== 3) { g[c] = 2; obst[c] = k; } });
     const f = HOROR_FURNITURE[o.kind];
-    if (f && f.hide) hides.push({ x: cx, y: cy, rect: o.rect, kind: o.kind, where: f.hide });
+    if (f && f.hide && !(o.kind === 'desk' && o.chairs !== false)) hides.push({ x: cx, y: cy, rect: o.rect, kind: o.kind, where: f.hide });   // pod lavicí se židlemi ne, pod katedrou ano
   });
   // dveře: průchozí do místností mapy (a východ ven), ostatní zamčené
   const doors = [], doorAt = new Int16Array(W * H).fill(-1);
@@ -504,12 +508,24 @@ function hororMap(roomId) {
       }
       if (bs < 1000) continue;   // nikde volno – šuplík by nešel otevřít
       const hz = best === 'top' || best === 'bottom', len = hz ? r.w : r.h, w = Math.min(34, len - 4), z = zb(r.x + r.w / 2, r.y + r.h / 2);
-      const pr = hz ? { x: r.x + (r.w - w) / 2, y: best === 'top' ? o.rect.y - 12 : o.rect.y + o.rect.h, w, h: 12 } : { x: best === 'left' ? o.rect.x - 12 : o.rect.x + o.rect.w, y: r.y + (r.h - w) / 2, w: 12, h: w };
+      const DEP = 14, pr = hz ? { x: r.x + (r.w - w) / 2, y: best === 'top' ? o.rect.y - DEP : o.rect.y + o.rect.h, w, h: DEP } : { x: best === 'left' ? o.rect.x - DEP : o.rect.x + o.rect.w, y: r.y + (r.h - w) / 2, w: DEP, h: w };
       const id = `${roomId}:${M.drawers.length}`, lo = m.drawer.lo + z, hi = m.drawer.hi + z, mid = (lo + hi) / 2;
-      const col = boxes.length ? boxes[boxes.length - 1].c : [150, 110, 70];
-      boxes.push({ ...pr, z0: lo, z1: hi, c: col.map((v) => Math.min(255, v + 25)), s: 0, dr: id, inner: 1 });   // vytažený šuplík (jen otevřený)
-      const hd = hz ? { x: pr.x + w / 2 - 4, y: best === 'top' ? o.rect.y - 1.5 : o.rect.y + o.rect.h, w: 8, h: 1.5 } : { x: best === 'left' ? o.rect.x - 1.5 : o.rect.x + o.rect.w, y: pr.y + w / 2 - 4, w: 1.5, h: 8 };
-      boxes.push({ ...hd, z0: mid - 1, z1: mid + 1, c: [214, 206, 178], s: 0 });   // úchytka
+      const host = m.boxes.find((b) => b.s && r.x + r.w / 2 >= b.x && r.x + r.w / 2 <= b.x + b.w && r.y + r.h / 2 >= b.y && r.y + r.h / 2 <= b.y + b.h && b.z0 <= mid && b.z1 >= mid);   // skříňka, ve které šuplík je
+      const col = host ? host.c : [150, 110, 70], front = col.map((v) => Math.min(255, v + 30));
+      const nx = best === 'left' ? -1 : best === 'right' ? 1 : 0, ny = best === 'top' ? -1 : best === 'bottom' ? 1 : 0;
+      const faceX = best === 'left' ? o.rect.x : o.rect.x + o.rect.w, faceY = best === 'top' ? o.rect.y : o.rect.y + o.rect.h;
+      // obdélník šuplíku: a = podél čela (od kraje šuplíku), d = kolik před čelem, la / ld = délka / hloubka
+      const DR = (a, d, la, ld) => (hz ? { x: pr.x + a, y: ny > 0 ? faceY + d : faceY - d - ld, w: la, h: ld } : { x: nx > 0 ? faceX + d : faceX - d - ld, y: pr.y + a, w: ld, h: la });
+      const slide = { dr: id, nx, ny, dep: DEP }, brass = [218, 196, 120];
+      // zavřený: světlejší čelo s hranou a mosazná úchytka
+      boxes.push({ ...DR(0, 0, w, 0.8), z0: lo, z1: hi, c: front, s: 0, drc: id });
+      boxes.push({ ...DR(w / 2 - 5, 0.8, 10, 1.4), z0: mid - 1, z1: mid + 1.2, c: brass, s: 0, drc: id });
+      // otevřený (vysune se o DEP px): čelo, úchytka, boky, dno a tmavé vnitřky
+      boxes.push({ ...DR(0, DEP - 1.2, w, 1.2), z0: lo, z1: hi, c: front, s: 0, ...slide });
+      boxes.push({ ...DR(w / 2 - 5, DEP, 10, 1.4), z0: mid - 1, z1: mid + 1.2, c: brass, s: 0, ...slide });
+      boxes.push({ ...DR(0, 0, 1.2, DEP - 1.2), z0: lo + 1, z1: hi - 2, c: col, s: 0, ...slide });
+      boxes.push({ ...DR(w - 1.2, 0, 1.2, DEP - 1.2), z0: lo + 1, z1: hi - 2, c: col, s: 0, ...slide });
+      boxes.push({ ...DR(1.2, 0, w - 2.4, DEP - 1.2), z0: lo + 1, z1: lo + 2.2, c: [62, 44, 28], s: 0, ...slide });
       M.drawers.push({ id, kind: o.kind, rect: o.rect, cx: r.x + r.w / 2, cy: r.y + r.h / 2, px: pr.x + pr.w / 2, py: pr.y + pr.h / 2, lo, hi });
     }
   });
@@ -690,7 +706,10 @@ function hororMakeRound() {
 function hororResetPlayer(H, i) {
   const k = i || 0;
   H.p = { ...HOROR.START, x: HOROR.START.x + ((k % 2) ? 1 : -1) * Math.ceil(k / 2) * 34 };
-  Object.assign(H, { pitch: 0, stamina: HOROR.STAMINA, tired: false, bob: 0, walk: 0, bat: 100, lightK: 1, pz: 0, ghost: false, hidden: null, hideSeen: false, doorCd: 0, fade: 0.4, breathT: 0, dark: 0, flicker: 1, scared: false });
+  const U = (id) => (typeof hororUp === 'function' ? hororUp(id) : 0);   // vylepšení z obchodu (41_ucty_a_odmeny.js)
+  H.up = { speed: 1 + 0.08 * U('rychlost'), stamina: HOROR.STAMINA + U('vydrz'), bat: HOROR.BAT * (1 + 0.3 * U('baterka')), light: 1 + 0.15 * U('svetlo'), quiet: 1 - 0.25 * U('tichost') };
+  H.bonusSp = U('nahradni');
+  Object.assign(H, { pitch: 0, stamina: H.up.stamina, tired: false, bob: 0, walk: 0, bat: 100, lightK: 1, pz: 0, ghost: false, hidden: null, hideSeen: false, doorCd: 0, fade: 0.4, breathT: 0, dark: 0, flicker: 1, scared: false });
 }
 function openHoror() {
   const r = hororMakeRound();
@@ -758,6 +777,20 @@ function hororDrawerHas(H, id) {
   for (const ch of id) h = (Math.imul(h, 31) + ch.charCodeAt(0)) | 0;
   return hororHash(h, 977) < HOROR.BAT_CHANCE;
 }
+// Jak moc je šuplík vysunutý (0 zavřený … 1 otevřený), plynule
+function hororDrawerK(H, id) {
+  const v = H.anim && H.anim[id];
+  return v === undefined ? (H.open && H.open.has(id) ? 1 : 0) : v;
+}
+function hororDrawerAnim(H, dt) {
+  H.anim = H.anim || {};
+  for (const id of H.open) if (!(id in H.anim)) H.anim[id] = 0;
+  for (const id of Object.keys(H.anim)) {
+    const want = H.open.has(id) ? 1 : 0, v = H.anim[id];
+    H.anim[id] = want > v ? Math.min(1, v + dt * 5) : Math.max(0, v - dt * 5);
+    if (!want && H.anim[id] <= 0) delete H.anim[id];
+  }
+}
 // Šuplík, u kterého stojím
 function hororDrawerNear(H) {
   if (H.hidden || H.ghost) return null;
@@ -788,8 +821,12 @@ function hororAct(H, who, d) {
   const me = who === hororMe();
   H.sp[who] = H.sp[who] || 0;
   if (d.k === 'drw') {
-    if (H.open.has(d.id)) H.open.delete(d.id); else H.open.add(d.id);
-    if (me) hororNoise(0.22, 900, 0.3, 0);
+    const opening = !H.open.has(d.id);
+    if (opening) H.open.add(d.id); else H.open.delete(d.id);
+    if (me) {
+      hororNoise(0.22, 900, 0.3, 0);
+      if (opening) hororSay(hororDrawerHas(H, d.id) && !H.taken.has(d.id) ? '🔋 V šuplíku je baterka! (E = vzít)' : 'Prázdný šuplík…', 1.6);
+    }
   } else if (d.k === 'take') {
     if (!H.open.has(d.id) || H.taken.has(d.id) || !hororDrawerHas(H, d.id)) return;
     H.taken.add(d.id); H.sp[who]++;
@@ -799,8 +836,9 @@ function hororAct(H, who, d) {
     H.sp[who]--;
     if (me) { H.bat = 100; hororTone(880, 0.1, 'square', 0.12); hororSay('🔦 Nová baterka', 1.5); }
   } else if (d.k === 'give') {
-    if (H.sp[who] <= 0 || typeof d.to !== 'string') return;
-    H.sp[who]--; H.sp[d.to] = (H.sp[d.to] || 0) + 1;
+    if (typeof d.to !== 'string' || (!d.free && H.sp[who] <= 0)) return;
+    if (!d.free) H.sp[who]--;
+    H.sp[d.to] = (H.sp[d.to] || 0) + 1;   // free = náhradní baterka z obchodu (počítá si ji hráč sám)
   } else if (d.k === 'key') {
     const key = H.keys[d.i];
     if (!key || key.got) return;
@@ -896,7 +934,7 @@ const hororSees = (H) => hororSeesT(H.lada, { id: hororMe(), room: H.p.room, x: 
 // Koho Láďa honí: já (když nejsem chycený) a online kamarádi, které ještě nechytil
 function hororTargets(H) {
   const out = [];
-  if (!H.ghost && H.phase !== 'caught' && H.p) out.push({ id: hororMe(), room: H.p.room, x: H.p.x, y: H.p.y, hidden: !!H.hidden, running: !!H.running });
+  if (!H.ghost && H.phase !== 'caught' && H.p) out.push({ id: hororMe(), room: H.p.room, x: H.p.x, y: H.p.y, hidden: !!H.hidden, running: !!H.running, quiet: H.up ? H.up.quiet : 1 });
   if (H.net && typeof hororOthers === 'function') {
     for (const o of hororOthers()) if (!H.out.includes(o.id) && !o.gh) out.push({ id: o.id, room: o.r, x: o.x, y: o.y, hidden: o.hh, running: o.hr });
   }
@@ -931,7 +969,7 @@ function hororLada(H, dt) {
   } else if (tg && L.mode === 'chase' && tg.room !== L.room && L.last && L.last.room === L.room && L.seenT < 1.5) {   // viděl ho utíkat dveřmi → za ním
     L.last = { room: tg.room, x: tg.x, y: tg.y }; hororPlan(L, L.last);
   } else if (L.mode !== 'chase') {   // slyší běh – jde se podívat
-    const heard = T.find((t) => t.room === L.room && t.running && hororDist(L, t) < cfg.HEAR);
+    const heard = T.find((t) => t.room === L.room && t.running && hororDist(L, t) < cfg.HEAR * (t.quiet || 1));
     if (heard) { L.mode = 'check'; L.tg = heard.id; L.last = { room: heard.room, x: heard.x, y: heard.y }; hororPlan(L, L.last); }
   }
   L.pathT -= dt;
@@ -1020,8 +1058,8 @@ function hororToggleHide(H) {
 }
 
 // --- Krok hry ---
-const HOROR_MENU = [{ x: 250, y: 430, w: 300, h: 44 }, { x: 250, y: 482, w: 300, h: 44 }, { x: 250, y: 534, w: 300, h: 44 }];
-const HOROR_BAT_BTN = { x: 660, y: 396, w: 120, h: 60 }, HOROR_GIVE_BTN = { x: 660, y: 322, w: 120, h: 60 };
+const HOROR_MENU = [0, 1, 2, 3].map((i) => ({ x: 250, y: 400 + i * 48, w: 300, h: 42 }));
+const HOROR_BAT_BTN = { x: 660, y: 396, w: 120, h: 60 }, HOROR_GIVE_BTN = { x: 660, y: 322, w: 120, h: 60 }, HOROR_DRAWER_BTN = { x: 530, y: 470, w: 120, h: 60 };
 function updateHoror(dt) {
   const H = state.horor, keys = hororKeys.splice(0), events = input.events.splice(0);
   if (!H) return;
@@ -1033,18 +1071,20 @@ function updateHoror(dt) {
   if (H.phase === 'intro') {   // Hrát sám / S kamarády (online) / Zpět
     if (keys.includes('Escape')) { hororLeave(); return; }
     for (const k of keys) {
-      if (KEYMAP.up.includes(k)) H.menuSel = (H.menuSel + 2) % 3;
-      if (KEYMAP.down.includes(k)) H.menuSel = (H.menuSel + 1) % 3;
+      if (KEYMAP.up.includes(k)) H.menuSel = (H.menuSel + 3) % 4;
+      if (KEYMAP.down.includes(k)) H.menuSel = (H.menuSel + 1) % 4;
     }
     if (H.t < 0.3) return;
     for (const e of events) {
       const i = e.type === 'action' ? H.menuSel : e.x != null ? HOROR_MENU.findIndex((r) => pointInRect(e.x, e.y, r, 4)) : -1;
       if (i === 0) { hororBegin(); return; }
       if (i === 1 && typeof hororOnlinePick === 'function') { hororOnlinePick(H); return; }
-      if (i === 2) { hororLeave(); return; }
+      if (i === 2 && typeof hororShopInput === 'function') { H.phase = 'shop'; H.shopSel = 0; H.shopMsgT = 0; return; }
+      if (i === 3) { hororLeave(); return; }
     }
     return;
   }
+  if (H.phase === 'shop') { H.shopMsgT = (H.shopMsgT || 0) - dt; hororShopInput(H, keys, events); return; }   // ⭐ Vylepšení (41_ucty_a_odmeny.js)
   if (H.phase === 'pause') {
     H.pauseT = (H.pauseT || 0) + dt;
     if ((keys.includes('Escape') && H.pauseT > 0.5) || keys.includes('KeyQ')) { hororLeave(); return; }
@@ -1070,25 +1110,31 @@ function updateHoror(dt) {
   if (events.some((e) => e.x != null && !e.inJoyZone && !document.pointerLockElement && !isTouchHint())) hororLock();
   // E (tlačítko na mobilu): šuplík, jinak schovat / vylézt
   const hideTap = events.some((e) => e.x != null && pointInRect(e.x, e.y, HOROR_HIDE_BTN, 6));
-  if ((keys.includes('KeyE') || hideTap) && !H.ghost) {
+  const drawerTap = events.some((e) => e.x != null && pointInRect(e.x, e.y, HOROR_DRAWER_BTN, 6));
+  if (!H.ghost) {
     const dr = hororDrawerNear(H);
-    if (dr) { const a = hororDrawerAction(H, dr); hororDo({ k: a.k, id: a.id }); } else hororToggleHide(H);
+    if (dr && (keys.includes('KeyE') || drawerTap)) { const a = hororDrawerAction(H, dr); hororDo({ k: a.k, id: a.id }); }
+    else if (keys.includes('KeyF') || hideTap || (keys.includes('KeyE') && !dr)) hororToggleHide(H);
   }
+  hororDrawerAnim(H, dt);
   // baterka: vybíjí se; R = vyměnit za náhradní; G = půjčit kamarádovi (online)
-  const mySp = H.sp[hororMe()] || 0;
+  const mySp = (H.sp[hororMe()] || 0) + (H.bonusSp || 0);
   if (!H.ghost) {
     const before = H.bat;
-    H.bat = Math.max(0, H.bat - dt * 100 / HOROR.BAT);
+    H.bat = Math.max(0, H.bat - dt * 100 / H.up.bat);
     if (before > 20 && H.bat <= 20) hororSay(mySp ? 'Baterka slábne… R = vyměnit' : 'Baterka slábne! Hledej novou v šuplících.', 3);
     if (before > 0 && H.bat <= 0) hororSay(mySp ? 'Baterka došla! R = vyměnit' : 'Baterka došla! Najdi novou v šuplíku.', 3.5);
   }
   H.lightK = H.ghost ? 1 : H.bat > 25 ? 1 : H.bat > 0 ? 0.3 + 0.7 * H.bat / 25 : 0;
   if ((keys.includes('KeyR') || events.some((e) => e.x != null && pointInRect(e.x, e.y, HOROR_BAT_BTN, 6) && mySp > 0)) && !H.ghost && H.bat < 100) {
-    if (mySp > 0) hororDo({ k: 'use' }); else hororSay('Nemáš náhradní baterku – hledej v šuplících.', 2);
+    if (H.bonusSp > 0) { H.bonusSp--; H.bat = 100; hororTone(880, 0.1, 'square', 0.12); hororSay('🔦 Nová baterka', 1.5); }
+    else if (mySp > 0) hororDo({ k: 'use' }); else hororSay('Nemáš náhradní baterku – hledej v šuplících.', 2);
   }
   const mate = typeof hororMateNear === 'function' ? hororMateNear(H) : null;
   if ((keys.includes('KeyG') || events.some((e) => e.x != null && pointInRect(e.x, e.y, HOROR_GIVE_BTN, 6))) && mate && !H.ghost) {
-    if (mySp > 0) { hororDo({ k: 'give', to: mate.id }); hororSay(`🔋 Půjčil jsi baterku: ${mate.n}`, 2); } else hororSay('Nemáš náhradní baterku na půjčení.', 2);
+    if ((H.sp[hororMe()] || 0) > 0) { hororDo({ k: 'give', to: mate.id }); hororSay(`🔋 Půjčil jsi baterku: ${mate.n}`, 2); }
+    else if (H.bonusSp > 0) { H.bonusSp--; hororDo({ k: 'give', to: mate.id, free: 1 }); hororSay(`🔋 Půjčil jsi baterku: ${mate.n}`, 2); }
+    else hororSay('Nemáš náhradní baterku na půjčení.', 2);
   }
   const p = H.p, M = hororMap(p.room), k = (c) => input.keys.has(c);
   // pohyb (ve skříni se stojí)
@@ -1103,10 +1149,10 @@ function updateHoror(dt) {
   if (H.tired && H.stamina >= HOROR.TIRED) H.tired = false;
   H.running = wantRun && !H.tired && H.stamina > 0;
   if (H.running) { H.stamina = Math.max(0, H.stamina - dt); if (H.stamina <= 0) { H.tired = true; hororSay('Došel ti dech!', 1.5); } }
-  else H.stamina = Math.min(HOROR.STAMINA, H.stamina + dt * HOROR.REGEN * (len > 0 ? 0.6 : 1));
+  else H.stamina = Math.min(H.up.stamina, H.stamina + dt * HOROR.REGEN * (len > 0 ? 0.6 : 1));
   if (H.tired) { H.breathT -= dt; if (H.breathT <= 0) { H.breathT = 0.7; hororNoise(0.35, 700, 0.12, 0); } }
   if (len > 0) {
-    const sp = (H.running ? HOROR.RUN : HOROR.SPEED) * dt / Math.max(1, len);
+    const sp = (H.running ? HOROR.RUN : HOROR.SPEED) * H.up.speed * dt / Math.max(1, len);
     const mx = (Math.cos(p.a) * fwd - Math.sin(p.a) * side) * sp, my = (Math.sin(p.a) * fwd + Math.cos(p.a) * side) * sp;
     if (hororFree(M, p.x + mx, p.y, HOROR.RADIUS)) p.x += mx;
     if (hororFree(M, p.x, p.y + my, HOROR.RADIUS)) p.y += my;
@@ -1165,6 +1211,7 @@ function hororPlayerThrough(H, d) {
 }
 function hororWin(H) {
   H.phase = 'win'; H.winT = H.t; H.caughtT = 0; H.overSel = 0;
+  if (typeof mainMoneyAdd === 'function') { mainMoneyAdd(250); H.reward = 250; }   // odměna do peněz hry (41_ucty_a_odmeny.js)
   hororDrone(false);
   if (document.pointerLockElement) document.exitPointerLock();
   hororTone(523, 0.2, 'triangle', 0.3); hororTone(784, 0.4, 'triangle', 0.3, 0, 0, 0.2);
@@ -1203,7 +1250,7 @@ function hororEyes(phase, blend) {
 const hororCone = (cam) => Math.max(0, Math.min(1, 1 - (Math.abs(cam) - 0.38) / 0.67));
 const hororLightAt = (H, dist, cam) => {
   const k = H.lightK === undefined ? 1 : H.lightK;
-  const near = k > 0 ? Math.pow(Math.max(0, 1 - dist / (HOROR.LIGHT * Math.max(0.2, k))), 1.15) : 0;
+  const near = k > 0 ? Math.pow(Math.max(0, 1 - dist / (HOROR.LIGHT * (H.up ? H.up.light : 1) * Math.max(0.2, k))), 1.15) : 0;
   const amb = Math.max(0.04, 0.17 - dist / 7000) * (k > 0 ? 1 : 0.75);
   return Math.max(amb, hororCone(cam) * near) * H.flicker;
 };
@@ -1398,26 +1445,32 @@ function hororColumn(H, M, ray, x, cw, horizon, proj, E, Ht, ci) {
       if (M.stamp[bi] === tick) continue;
       M.stamp[bi] = tick;
       const b = M.boxes[bi];
-      if (b.dr && !(H.open && H.open.has(b.dr))) continue;   // zavřený šuplík
+      let bx = b.x, by = b.y;
+      if (b.drc && hororDrawerK(H, b.drc) > 0.02) continue;   // čelo zavřeného šuplíku
+      if (b.dr) {   // vysunutý šuplík (plynule)
+        const kk = hororDrawerK(H, b.dr);
+        if (kk <= 0.02) continue;
+        bx += b.nx * (kk - 1) * b.dep; by += b.ny * (kk - 1) * b.dep;
+      }
       let t0 = -1e9, t1 = 1e9, ax = 0;
-      if (Math.abs(dx) < 1e-9) { if (ox < b.x || ox > b.x + b.w) continue; } else {
-        let a = (b.x - ox) / dx, c = (b.x + b.w - ox) / dx;
+      if (Math.abs(dx) < 1e-9) { if (ox < bx || ox > bx + b.w) continue; } else {
+        let a = (bx - ox) / dx, c = (bx + b.w - ox) / dx;
         if (a > c) { const s = a; a = c; c = s; }
         t0 = a; t1 = c;
       }
-      if (Math.abs(dy) < 1e-9) { if (oy < b.y || oy > b.y + b.h) continue; } else {
-        let a = (b.y - oy) / dy, c = (b.y + b.h - oy) / dy;
+      if (Math.abs(dy) < 1e-9) { if (oy < by || oy > by + b.h) continue; } else {
+        let a = (by - oy) / dy, c = (by + b.h - oy) / dy;
         if (a > c) { const s = a; a = c; c = s; }
         if (a > t0) { t0 = a; ax = 1; }
         t1 = Math.min(t1, c);
       }
       if (t1 < t0 || t1 <= 0.5) continue;
-      hits.push({ b, t0: Math.max(0.5, t0), t1, ax });
+      hits.push({ b, t0: Math.max(0.5, t0), t1, ax, bx, by });
     }
     if (hits.length > 1) hits.sort((p, q) => p.t0 - q.t0);
     for (const h of hits) {
       const b = h.b, e0 = h.t0 * cos, e1 = h.t1 * cos, lb = light(e0) * (h.ax ? 0.72 : 1);
-      const along = h.ax ? ox + dx * h.t0 - b.x : oy + dy * h.t0 - b.y, len = h.ax ? b.w : b.h, edge = len > 4 && (along < 1.2 || len - along < 1.2);
+      const along = h.ax ? ox + dx * h.t0 - h.bx : oy + dy * h.t0 - h.by, len = h.ax ? b.w : b.h, edge = len > 4 && (along < 1.2 || len - along < 1.2);
       if (b.s) {
         fill(b.c, lb * (edge ? 0.62 : 1), Y(e0, b.z1), Y(e0, b.z0));
         if (b.z1 < E) fill(b.c, light(e0) * 1.12, Y(e1, b.z1), Y(e0, b.z1));
@@ -1583,7 +1636,7 @@ function renderHoror() {
     sprites.push({ x: d.cx + vx / vl * half, y: d.cy + vy / vl * half, kind: 'sign', d });
   }
   for (const lamp of M.lamps) sprites.push({ x: lamp.x, y: lamp.y, kind: 'lamp' });
-  for (const dr of M.drawers) if (H.open && H.open.has(dr.id) && hororDrawerHas(H, dr.id) && !H.taken.has(dr.id)) sprites.push({ x: dr.px, y: dr.py, kind: 'bat', h: dr.hi - 4 });
+  for (const dr of M.drawers) if (hororDrawerK(H, dr.id) > 0.85 && hororDrawerHas(H, dr.id) && !H.taken.has(dr.id)) sprites.push({ x: dr.px, y: dr.py, kind: 'bat', h: dr.lo + 6 });
   if (typeof hororOthers === 'function') for (const o of hororOthers()) if (o.r === p.room && !o.hh && (!o.gh || H.ghost)) sprites.push({ x: o.dx, y: o.dy, kind: 'mate', o });
   sprites.sort((a, b) => hororDist(b, p) - hororDist(a, p));
   for (const s of sprites) {
@@ -1603,11 +1656,16 @@ function renderHoror() {
   vg.addColorStop(0, 'rgba(0, 0, 0, 0)'); vg.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
   ctx.fillStyle = vg; ctx.fillRect(left, 0, width, Ht);
   if (H.ghost) { ctx.fillStyle = 'rgba(120, 0, 0, 0.22)'; ctx.fillRect(left, 0, width, Ht); }   // chycený (online) = duch
-  if (H.hidden) {   // ve skříni: tma a škvíra mezi dvířky
+  if (H.hidden && HOROR_HIDE_IN.includes(H.hidden.kind)) {   // ve skříni / skříňce / kabince: tma a škvíra mezi dvířky
     ctx.fillStyle = 'rgba(0, 0, 0, 0.93)';
     ctx.fillRect(left, 0, width / 2 - 26, Ht); ctx.fillRect(left + width / 2 + 26, 0, width / 2, Ht);
     ctx.fillStyle = 'rgba(40, 26, 14, 0.9)';
     ctx.fillRect(left + width / 2 - 34, 0, 8, Ht); ctx.fillRect(left + width / 2 + 26, 0, 8, Ht);
+  } else if (H.hidden) {   // pod / za nábytkem: nahoře deska, kouká se jen škvírou u země
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
+    ctx.fillRect(left, 0, width, Ht * 0.6); ctx.fillRect(left, Ht * 0.86, width, Ht * 0.14);
+    ctx.fillStyle = 'rgba(70, 48, 28, 0.95)'; ctx.fillRect(left, Ht * 0.6, width, 10);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fillRect(left, Ht * 0.6 + 10, width * 0.08, Ht * 0.26); ctx.fillRect(left + width * 0.92, Ht * 0.6 + 10, width * 0.08, Ht * 0.26);
   }
   if (H.fade > 0) { ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, H.fade / 0.3)})`; ctx.fillRect(left, 0, width, Ht); }
   ctx.restore();
@@ -1625,9 +1683,9 @@ function drawHororHud(H) {
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'; ctx.fillRect(20, 82, 140, 9);
     ctx.fillStyle = H.tired ? '#e53935' : H.stamina < 1.2 ? '#ff9800' : '#9ccc65';
-    ctx.fillRect(20, 82, 140 * H.stamina / HOROR.STAMINA, 9);
+    ctx.fillRect(20, 82, 140 * H.stamina / H.up.stamina, 9);
     // baterka a náhradní baterky
-    const sp = H.sp[hororMe()] || 0;
+    const sp = (H.sp[hororMe()] || 0) + (H.bonusSp || 0);
     if (!H.ghost) {
       drawOutlinedText(`🔦 ${Math.ceil(H.bat)} %${sp ? `   🔋×${sp}${keysHint ? ' (R)' : ''}` : ''}`, 90, 106, 'bold 11px sans-serif', H.bat < 20 ? '#ff8a80' : '#cfcfcf', 'middle');
       ctx.textAlign = 'left';
@@ -1639,14 +1697,15 @@ function drawHororHud(H) {
     drawOutlinedText(hororRoomName(H.p.room), W / 2, 22, 'bold 14px sans-serif', '#9e9e9e', 'middle');
     if (H.msgT > 0) drawOutlinedText(H.msg, W / 2, 110, 'bold 22px sans-serif', /^Láďa/.test(H.msg) ? '#ff5a4a' : '#ffffff', 'middle');
     // šuplík / schovat se: nápověda (E) nebo tlačítko na mobilu
-    const dr = hororDrawerNear(H), hn = dr ? null : hororHideNear(H);
+    const dr = hororDrawerNear(H), hn = hororHideNear(H);
     if (dr) {
       const a = hororDrawerAction(H, dr);
       if (keysHint) drawOutlinedText(`E – ${a.label}`, W / 2, Ht - 60, 'bold 18px sans-serif', '#ffd54a', 'middle');
-      else drawChessButton(HOROR_HIDE_BTN, a.label, false, '#5a4632');
-    } else if ((H.hidden || hn) && !H.ghost) {
+      else drawChessButton(HOROR_DRAWER_BTN, a.label, false, '#5a4632');
+    }
+    if ((H.hidden || hn) && !H.ghost) {
       const label = H.hidden ? 'Vylézt' : `Schovat se`;
-      if (keysHint) drawOutlinedText(`E – ${label}${hn ? ` (${hn.where})` : ''}`, W / 2, Ht - 60, 'bold 18px sans-serif', '#ffd54a', 'middle');
+      if (keysHint) drawOutlinedText(`${dr ? 'F' : 'E'} – ${label}${hn ? ` (${hn.where})` : ''}`, W / 2, Ht - (dr ? 86 : 60), 'bold 18px sans-serif', '#ffd54a', 'middle');
       else drawChessButton(HOROR_HIDE_BTN, `🫣 ${label}`, false, '#4a3a28');
     }
     if (!keysHint && sp > 0 && H.bat < 60 && !H.ghost) drawChessButton(HOROR_BAT_BTN, '🔋 Vyměnit', false, '#3d5a2a');
@@ -1655,17 +1714,17 @@ function drawHororHud(H) {
       if (keysHint) drawOutlinedText(`G – půjčit baterku: ${mate.n}`, W / 2, Ht - 86, 'bold 15px sans-serif', '#a5d6a7', 'middle');
       else drawChessButton(HOROR_GIVE_BTN, '🔋 Půjčit', false, '#2a4a5a');
     }
-    if (H.t < 7 && H.phase === 'play') drawOutlinedText(keysHint ? 'WASD – chůze · myš – otáčení · Shift – sprint · E – šuplík / schovat · R – baterka · Esc – pauza' : 'Joystick – chůze · táhni vpravo – otáčení', W / 2, Ht - 24, 'bold 13px sans-serif', '#cfcfcf', 'middle');
+    if (H.t < 7 && H.phase === 'play') drawOutlinedText(keysHint ? 'WASD – chůze · myš – rozhlížení · Shift – sprint · E – šuplík · F – schovat · R – baterka · Esc – pauza' : 'Joystick – chůze · táhni vpravo – otáčení', W / 2, Ht - 24, 'bold 13px sans-serif', '#cfcfcf', 'middle');
   }
   if (H.phase === 'intro') {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, Ht);
     drawOutlinedText('👻 BACHA NA LÁĎU', W / 2, 130, 'bold 46px sans-serif', '#ff4d4d', 'middle');
     ['Je noc. Zůstal jsi zamčený v budově A.', 'Po chodbách a třídách chodí Láďa… a hledá tě.', `Najdi ${HOROR.KEYS} klíče (jsou ve třídách) a uteč hlavním vchodem.`,
       'Když tě uvidí, utíkej – ztrať se mu z očí, nebo se schovej do skříně.', 'Baterka se vybíjí – nové jsou v šuplících.']
-      .forEach((t, i) => drawOutlinedText(t, W / 2, 190 + i * 30, 'bold 17px sans-serif', '#ffffff', 'middle', W - 40));
-    drawOutlinedText(keysHint ? 'WASD – chůze · myš – otáčení · Shift – sprint · E – šuplík / schovat · R – baterka' : 'Joystick vlevo – chůze (naplno = sprint) · táhni vpravo – otáčení', W / 2, 352, 'bold 14px sans-serif', '#cfcfcf', 'middle');
-    drawOutlinedText('🎧 Nejlepší se sluchátky', W / 2, 380, 'bold 14px sans-serif', '#cfcfcf', 'middle');
-    ['🔦 Hrát sám', '👥 Hrát s kamarády (online, max 4)', 'Zpět'].forEach((t, i) => drawChessButton(HOROR_MENU[i], t, i === H.menuSel, i === 1 ? '#2f5a7a' : i === 2 ? '#5a4636' : '#7a2a2a'));
+      .forEach((t, i) => drawOutlinedText(t, W / 2, 185 + i * 28, 'bold 16px sans-serif', '#ffffff', 'middle', W - 40));
+    drawOutlinedText(keysHint ? 'WASD – chůze · myš – rozhlížení · Shift – sprint · E – šuplík · F – schovat · R – baterka' : 'Joystick vlevo – chůze (naplno = sprint) · táhni vpravo – rozhlížení', W / 2, 335, 'bold 13px sans-serif', '#cfcfcf', 'middle', W - 30);
+    drawOutlinedText(`🎧 Nejlepší se sluchátky   ·   💰 ${typeof mainMoneyGet === 'function' ? mainMoneyGet() : 0} Kč   ·   za útěk +250 Kč`, W / 2, 365, 'bold 14px sans-serif', '#ffd54a', 'middle');
+    ['🔦 Hrát sám', '👥 Hrát s kamarády (online, max 4)', '⭐ Vylepšení postavy', 'Zpět'].forEach((t, i) => drawChessButton(HOROR_MENU[i], t, i === H.menuSel, ['#7a2a2a', '#2f5a7a', '#7a5a12', '#5a4636'][i]));
   } else if (H.phase === 'pause') {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, Ht);
     drawOutlinedText('Pauza', W / 2, 240, 'bold 40px sans-serif', '#ffffff', 'middle');
@@ -1687,10 +1746,11 @@ function drawHororHud(H) {
   } else if (H.phase === 'win' && H.caughtT > 0.3) {
     ctx.fillStyle = 'rgba(0, 20, 10, 0.9)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, Ht);
     drawOutlinedText('UTEKL JSI! 🎉', W / 2, 220, 'bold 48px sans-serif', '#7ee08a', 'middle');
-    drawOutlinedText(`Za ${Math.round(H.winT || 0)} s – Láďa zůstal ve škole sám.`, W / 2, 272, 'bold 18px sans-serif', '#ffffff', 'middle');
+    drawOutlinedText(`Za ${Math.round(H.winT || 0)} s – Láďa zůstal ve škole sám.${H.reward ? `  💰 +${H.reward} Kč` : ''}`, W / 2, 272, 'bold 18px sans-serif', '#ffffff', 'middle');
     if (H.caughtT >= 1.6) chessOverButtons().forEach((r, i) => drawChessButton(r, i === 0 ? 'Hrát znovu' : 'Odejít', i === H.overSel));
   }
   if (typeof drawHororNet === 'function') drawHororNet(H);   // online: seznam her, čekárna, konec (40_horor_online.js)
+  if (H.phase === 'shop' && typeof drawHororShop === 'function') drawHororShop(H);   // ⭐ Vylepšení (41_ucty_a_odmeny.js)
 }
 
 // Úvod → 🎮 Módy → 👻 Bacha na Láďu (10_obrazovky.js, modesItems)

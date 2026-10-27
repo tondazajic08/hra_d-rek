@@ -598,6 +598,7 @@ function amongApplyS(S) {
     among.phase = 'end';
     state.amongTask = null; among.deathAnim = null;
     const won = (S.win === 'imp') === (among.role === 'zaskodnik');
+    if (won && typeof mainMoneyAdd === 'function') { mainMoneyAdd(25); state.toast = { text: '💰 Výhra: +25 Kč do hlavní hry', t: CONFIG.TOAST_TIME + 2 }; }   // odměna (41_ucty_a_odmeny.js)
     playSound(won ? CONFIG.SOUND_COMPLETE : CONFIG.SOUND_MISS);
   }
 }
