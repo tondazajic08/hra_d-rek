@@ -43,11 +43,11 @@ function mainMoneyAdd(n) {
 const HOROR_UP_KEY = 'hra_darek_horor_v1';
 const HOROR_UPS = [
   { id: 'rychlost', icon: '🏃', name: 'Rychlejší nohy', text: '+8 % chůze i sprint', cost: [150, 300, 500] },
-  { id: 'vydrz', icon: '💨', name: 'Výdrž', text: '+1 s sprintu', cost: [120, 250, 400] },
-  { id: 'baterka', icon: '🔦', name: 'Lepší baterka', text: 'vydrží o 30 % déle', cost: [100, 220, 380] },
+  { id: 'vydrz', icon: '💨', name: 'Stamina', text: '+1 s sprintu a rychlejší oddech', cost: [100, 180, 280, 400, 550] },
+  { id: 'baterka', icon: '🔋', name: 'Výdrž baterky', text: 'baterka vydrží o 25 % déle', cost: [80, 150, 250, 380, 520] },
   { id: 'svetlo', icon: '💡', name: 'Silnější světlo', text: '+15 % dosvit', cost: [150, 320] },
   { id: 'tichost', icon: '🤫', name: 'Tichý krok', text: 'Láďa tě slyší o 25 % hůř', cost: [200, 400] },
-  { id: 'nahradni', icon: '🔋', name: 'Náhradní baterka', text: 'na startu máš 1 navíc', cost: [300] },
+  { id: 'nahradni', icon: '🎒', name: 'Náhradní baterka', text: 'na startu máš 1 navíc', cost: [300] },
 ];
 function hororUps() {
   try { const d = JSON.parse(storageGet(HOROR_UP_KEY) || '{}'); return d && typeof d === 'object' ? d : {}; } catch (e) { return {}; }
@@ -108,7 +108,7 @@ function drawHororShop(H) {
     ctx.font = '12px sans-serif'; ctx.fillStyle = '#cfcfcf'; ctx.fillText(u.text, r.x + 50, r.y + 36);
     for (let k = 0; k < u.cost.length; k++) {   // úrovně
       ctx.fillStyle = k < lv ? '#ffd54a' : 'rgba(255, 255, 255, 0.2)';
-      ctx.beginPath(); ctx.arc(r.x + 330 + k * 18, r.y + r.h / 2, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(r.x + 310 + k * 16, r.y + r.h / 2, 5.5, 0, Math.PI * 2); ctx.fill();
     }
     ctx.textAlign = 'right'; ctx.font = 'bold 15px sans-serif';
     ctx.fillStyle = max ? '#7ee08a' : mainMoneyGet() >= u.cost[lv] ? '#ffd54a' : '#ff8a80';

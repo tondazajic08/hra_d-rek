@@ -707,7 +707,7 @@ function hororResetPlayer(H, i) {
   const k = i || 0;
   H.p = { ...HOROR.START, x: HOROR.START.x + ((k % 2) ? 1 : -1) * Math.ceil(k / 2) * 34 };
   const U = (id) => (typeof hororUp === 'function' ? hororUp(id) : 0);   // vylepšení z obchodu (41_ucty_a_odmeny.js)
-  H.up = { speed: 1 + 0.08 * U('rychlost'), stamina: HOROR.STAMINA + U('vydrz'), bat: HOROR.BAT * (1 + 0.3 * U('baterka')), light: 1 + 0.15 * U('svetlo'), quiet: 1 - 0.25 * U('tichost') };
+  H.up = { speed: 1 + 0.08 * U('rychlost'), stamina: HOROR.STAMINA + U('vydrz'), regen: 1 + 0.12 * U('vydrz'), bat: HOROR.BAT * (1 + 0.25 * U('baterka')), light: 1 + 0.15 * U('svetlo'), quiet: 1 - 0.25 * U('tichost') };
   H.bonusSp = U('nahradni');
   Object.assign(H, { pitch: 0, stamina: H.up.stamina, tired: false, bob: 0, walk: 0, bat: 100, lightK: 1, pz: 0, ghost: false, hidden: null, hideSeen: false, doorCd: 0, fade: 0.4, breathT: 0, dark: 0, flicker: 1, scared: false });
 }
@@ -727,6 +727,7 @@ function openHoror() {
 }
 function hororBegin() {
   const H = state.horor;
+  if (!H.net) hororResetPlayer(H, 0);   // vylepšení koupená v obchodě platí hned
   H.phase = 'play'; H.t = 0; H.fade = 0;
   hororDrone(true);
   hororLock();
@@ -1149,7 +1150,7 @@ function updateHoror(dt) {
   if (H.tired && H.stamina >= HOROR.TIRED) H.tired = false;
   H.running = wantRun && !H.tired && H.stamina > 0;
   if (H.running) { H.stamina = Math.max(0, H.stamina - dt); if (H.stamina <= 0) { H.tired = true; hororSay('Došel ti dech!', 1.5); } }
-  else H.stamina = Math.min(H.up.stamina, H.stamina + dt * HOROR.REGEN * (len > 0 ? 0.6 : 1));
+  else H.stamina = Math.min(H.up.stamina, H.stamina + dt * HOROR.REGEN * H.up.regen * (len > 0 ? 0.6 : 1));
   if (H.tired) { H.breathT -= dt; if (H.breathT <= 0) { H.breathT = 0.7; hororNoise(0.35, 700, 0.12, 0); } }
   if (len > 0) {
     const sp = (H.running ? HOROR.RUN : HOROR.SPEED) * H.up.speed * dt / Math.max(1, len);

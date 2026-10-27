@@ -12,6 +12,7 @@
 // Převlékat se jde u Lockeru a v čekárně Among Us (36_among.js).
 // =====================================================================
 const SKIN_KEY = 'hra_darek_skin_v1';
+const SKIN_HIDDEN = ['uklizecka'];   // postavy, které nejsou na výběr jako skin
 const SKINS = [
   { id: 'roman', name: 'Roman', hair: '#3a2a1c',
     body: CONFIG.PLAYER_VEST, check: CONFIG.PLAYER_VEST_CHECK, collar: CONFIG.PLAYER_SHIRT, arms: CONFIG.PLAYER_SHIRT, pants: CONFIG.PLAYER_PANTS, shoes: CONFIG.PLAYER_SHOES },
@@ -26,7 +27,7 @@ const SKINS = [
 ];
 // Postavy ze hry (TEACHERS jsou už načtení – soubory 03–28 jdou před tímhle)
 for (const [id, t] of Object.entries(TEACHERS)) {
-  if (!t.look || (!t.look.face && !t.look.hair)) continue;
+  if (!t.look || (!t.look.face && !t.look.hair) || SKIN_HIDDEN.includes(id)) continue;
   SKINS.push({ id: `p_${id}`, name: t.name, person: id, look: JSON.parse(JSON.stringify(t.look)), color: t.color, hair: t.look.hair || '#3a2a1c' });
 }
 const skinFaces = {};   // id → Image (jen skiny s vlastní hlavou)
