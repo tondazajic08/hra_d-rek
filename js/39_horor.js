@@ -29,7 +29,8 @@ const HOROR = {
   STAMINA: 4, REGEN: 0.55, TIRED: 1.4,   // výdrž sprintu (s), obnova za s, po vyčerpání sprint až od TIRED
   MOUSE: 0.0026, TOUCH_TURN: 0.009,
   RADIUS: 11,
-  LIGHT: 430,                            // dosvit baterky (px)
+  LIGHT: 680,                            // dosvit baterky (px) – víc vidět, ať se člověk neztrácí
+  ROW: 3,                                // px výšky obrazovky na řádek podlahy / stropu
   LADA: { WALK: 70, CHECK: 105, RUN: 168, SEE: 520, HEAR: 300, CATCH: 30, LOOK: 3, HEIGHT: 118 },
   KEYS: 3,
   HIDE_DIST: 42,                         // px od okraje skříně / kabinky
@@ -94,13 +95,28 @@ function hororMap(roomId) {
     if (rule && !rule.includes(d.part)) return;
     const exit = d.to === 'venku', open = exit || (d.to in rules && !ROOMS[d.to].front);
     const k = doors.push({ ...d, open, exit, cx: d.x + d.w / 2, cy: d.y + d.h / 2 }) - 1;
-    cells(d, (c) => { g[c] = 4; doorAt[c] = k; });
+    cells(d, (c) => { g[c] = d.hidden ? 5 : 4; doorAt[c] = k; });   // 5 = konec schodů (přechod do patra)
   });
   for (const d of doors) {   // bod kousek před dveřmi uvnitř místnosti (sem jde Láďa)
     const n = { top: [0, 1], bottom: [0, -1], left: [1, 0], right: [-1, 0] }[d.side] || [0, 0];
     d.ix = d.cx + n[0] * 26; d.iy = d.cy + n[1] * 26;
   }
-  const M = { id: roomId, room, W, H, g, C, obst, doors, doorAt, hides };
+  // podlaha / strop (kód textury na buňku): 1 teraco, 2 parkety, 3 dlaždice, 4 kámen, 5 prkna, 6 / 7 schody
+  const fl = new Uint8Array(W * H), base = roomId.startsWith('wc') ? 3 : roomId === 'aula' ? 5 : room.parts ? 1 : 2;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const x = room.x + (i + 0.5) * C, y = room.y + (j + 0.5) * C;
+    let code = base;
+    if (room.parts) {
+      const part = amongPartAt(room, x, y), pf = part && amongPart(roomId, part).frame;
+      if (part === 'vstup') code = 4;
+      if (pf && part.startsWith('schody')) {   // schodiště: 3 ramena a podesty (02_mistnosti.js, SCHODY_A)
+        const lx = x - pf.x, ly = y - pf.y;
+        code = (lx >= 200 && lx < 300 && ly >= 120) || (lx >= 20 && lx < 120 && ly >= 120) ? 6 : (lx >= 120 && lx < 200 && ly < 120) ? 7 : 4;
+      }
+    }
+    fl[j * W + i] = code;
+  }
+  const M = { id: roomId, room, W, H, g, C, obst, doors, doorAt, hides, fl, lamps: [] };
   const N = HOROR.NAV, NW = Math.ceil(room.w / N), NH = Math.ceil(room.h / N), nav = new Uint8Array(NW * NH);
   for (let j = 0; j < NH; j++) for (let i = 0; i < NW; i++) nav[j * NW + i] = hororFree(M, room.x + (i + 0.5) * N, room.y + (j + 0.5) * N, HOROR.RADIUS) ? 1 : 0;   // Láďa projde tam, kam hráč
   Object.assign(M, { NW, NH, nav });
@@ -123,6 +139,15 @@ function hororMap(roomId) {
     }
   }
   M.reach = reach;
+  if (room.parts) {   // kulaté lampy na chodbách: po chodbě co 180 px (jen nad místy, kam se dá dojít)
+    for (let j = 0; j < NH; j++) for (let i = 0; i < NW; i++) {
+      if (!reach[j * NW + i] || hororFree(M, room.x + (i + 0.5) * N, room.y + (j + 0.5) * N, 30) === false) continue;
+      const c = { x: room.x + (i + 0.5) * N, y: room.y + (j + 0.5) * N };
+      const part = amongPartAt(room, c.x, c.y);
+      if (part && part.startsWith('schody')) continue;
+      if (M.lamps.every((l) => hororDist(l, c) >= 180)) M.lamps.push(c);
+    }
+  }
   // úkryty jen ty, ke kterým se dá dojít (ne za lavicemi)
   M.hides = hides.filter((h) => {
     for (let j = 0; j < NH; j++) for (let i = 0; i < NW; i++) {
@@ -617,13 +642,122 @@ function hororEyes(phase, blend) {
   const hy = -13 - 24 - size + 5 - bob;
   return { x: neckX, y: hy + size * 0.46, dx: size * 0.17 };
 }
+// Světlo baterky: kužel uprostřed, dosvit HOROR.LIGHT; trochu světla i mimo (ať se člověk neztrácí)
+const hororCone = (cam) => Math.max(0, Math.min(1, 1 - (Math.abs(cam) - 0.38) / 0.67));
 const hororLightAt = (H, dist, cam) => {
-  const cone = Math.max(0, Math.min(1, 1 - (Math.abs(cam) - 0.22) / 0.5));
-  const near = Math.pow(Math.max(0, 1 - dist / HOROR.LIGHT), 1.35);
-  const amb = Math.max(0, 0.07 - dist / 9000);
-  return Math.max(amb, cone * near * H.flicker);
+  const near = Math.pow(Math.max(0, 1 - dist / HOROR.LIGHT), 1.15);
+  const amb = Math.max(0.04, 0.17 - dist / 7000);
+  return Math.max(amb, hororCone(cam) * near) * H.flicker;
 };
 const HOROR_HIDE_BTN = { x: 660, y: 470, w: 120, h: 60 };
+// Textury podlahy a stropu (kód z mapy místnosti → barva), hash = náhodné kamínky / prkna
+const hororHash = (a, b) => { let n = (a * 374761393 + b * 668265263) | 0; n = (n ^ (n >>> 13)) * 1274126177 | 0; return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+const hororMod = (v, m) => ((v % m) + m) % m;
+function hororFloorTex(code, wx, wy, out) {
+  let r, g, b;
+  if (code === 1) {   // teraco: kamínky a spáry po 40 px
+    const h = hororHash(Math.floor(wx / 2.5), Math.floor(wy / 2.5)), d = h < 0.12 ? -72 : h > 0.94 ? 30 : (h - 0.5) * 18;
+    const seam = hororMod(wx, 40) < 1.6 || hororMod(wy, 40) < 1.6 ? -32 : 0;
+    r = 176 + d + seam; g = 170 + d + seam; b = 158 + d + seam;
+  } else if (code === 2) {   // parkety (prkna 12 × 48 px)
+    const row = Math.floor(wy / 12), col = Math.floor((wx + row * 17) / 48), h = hororHash(row, col) - 0.5;
+    const seam = hororMod(wy, 12) < 1.2 || hororMod(wx + row * 17, 48) < 1.2 ? -40 : 0;
+    r = 150 + h * 36 + seam; g = 108 + h * 26 + seam; b = 66 + h * 18 + seam;
+  } else if (code === 3) {   // dlaždice na WC
+    const seam = hororMod(wx, 24) < 1.5 || hororMod(wy, 24) < 1.5 ? -60 : 0;
+    r = 214 + seam; g = 216 + seam; b = 218 + seam;
+  } else if (code === 4) {   // kámen (vstupní chodba, podesty)
+    const h = hororHash(Math.floor(wx / 3), Math.floor(wy / 3)), d = (h - 0.5) * 22;
+    r = 166 + d; g = 164 + d; b = 160 + d;
+  } else if (code === 5) {   // prkna v aule
+    const col = Math.floor(wx / 14), h = hororHash(col, Math.floor((wy + col * 23) / 90)) - 0.5, seam = hororMod(wx, 14) < 1.2 ? -36 : 0;
+    r = 140 + h * 30 + seam; g = 96 + h * 22 + seam; b = 56 + h * 14 + seam;
+  } else if (code === 6 || code === 7) {   // schody: hrana stupně (tmavá), stín pod ní, světlý kámen
+    const t = hororMod(code === 6 ? wy : wx, 18), k = t < 3 ? 0.55 : t < 7 ? 0.8 : 1;
+    r = 200 * k; g = 198 * k; b = 192 * k;
+  } else { r = 60; g = 60; b = 60; }
+  out[0] = r; out[1] = g; out[2] = b;
+}
+function hororCeilTex(code, wx, wy, out) {
+  if (code === 1 || code === 4 || code === 6 || code === 7) {   // chodby: klenby – žebra po 190 px
+    const rib = hororMod(wx, 190) < 9 || hororMod(wy, 190) < 9 ? 0.8 : 1;
+    out[0] = 236 * rib; out[1] = 236 * rib; out[2] = 232 * rib;
+  } else { out[0] = 238; out[1] = 236; out[2] = 230; }
+}
+let HOROR_FB = null;
+function hororFloorBuf(w, h) {
+  if (!HOROR_FB || HOROR_FB.width !== w || HOROR_FB.height !== h) {
+    HOROR_FB = document.createElement('canvas');
+    HOROR_FB.width = w; HOROR_FB.height = h;
+    HOROR_FB.c2 = HOROR_FB.getContext('2d');
+    HOROR_FB.img = HOROR_FB.c2.createImageData(w, h);
+  }
+  return HOROR_FB;
+}
+// Podlaha a strop do malého obrázku (1 bod = sloupec paprsku × HOROR.ROW px), pak roztáhnout
+function hororDrawFloor(H, M, cols, rays, horizon, proj, left, width, Ht) {
+  const RS = HOROR.ROW, rows = Math.ceil(Ht / RS), FB = hororFloorBuf(cols, rows), data = FB.img.data, col = [0, 0, 0];
+  const p = H.p, C = M.C, rx = M.room.x, ry = M.room.y, maxD = HOROR.LIGHT + 300;
+  for (let r = 0; r < rows; r++) {
+    const sy = (r + 0.5) * RS, floor = sy > horizon;
+    const dz = floor ? sy - horizon : horizon - sy;
+    const base = dz < 0.5 ? Infinity : (floor ? HOROR.EYE : HOROR.WALL_H - HOROR.EYE) * proj / dz;
+    for (let i = 0; i < cols; i++) {
+      const o = (r * cols + i) * 4, ray = rays[i];
+      if (base > maxD) { data[o] = data[o + 1] = data[o + 2] = 0; data[o + 3] = 255; continue; }
+      const along = base / ray.cos, wx = p.x + ray.dx * along, wy = p.y + ray.dy * along;
+      const ci = Math.floor((wx - rx) / C), cj = Math.floor((wy - ry) / C);
+      const code = ci >= 0 && cj >= 0 && ci < M.W && cj < M.H ? M.fl[cj * M.W + ci] : 0;
+      if (floor) hororFloorTex(code, wx, wy, col); else hororCeilTex(code, wx, wy, col);
+      const l = hororLightAt(H, base, ray.cam) * (floor ? 1 : 0.55);
+      data[o] = col[0] * l; data[o + 1] = col[1] * l; data[o + 2] = col[2] * l; data[o + 3] = 255;
+    }
+  }
+  FB.c2.putImageData(FB.img, 0, 0);
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(FB, left, 0, width, rows * RS);
+  ctx.restore();
+}
+// Paprsek pro kreslení: projde nízkým nábytkem (lavice, zábradlí…) a zapamatuje si ho, zastaví se o zeď
+function hororCastView(M, x, y, ang, max) {
+  const C = M.C, px = (x - M.room.x) / C, py = (y - M.room.y) / C, dx = Math.cos(ang), dy = Math.sin(ang);
+  let mx = Math.floor(px), my = Math.floor(py);
+  const ddx = Math.abs(1 / (dx || 1e-9)), ddy = Math.abs(1 / (dy || 1e-9));
+  const stepX = dx < 0 ? -1 : 1, stepY = dy < 0 ? -1 : 1;
+  let sx = (dx < 0 ? px - mx : mx + 1 - px) * ddx, sy = (dy < 0 ? py - my : my + 1 - py) * ddy, side = 0, t = 0, lastObst = -2;
+  const layers = [];
+  for (let k = 0; k < 700; k++) {
+    if (sx < sy) { t = sx; sx += ddx; mx += stepX; side = 0; } else { t = sy; sy += ddy; my += stepY; side = 1; }
+    if (t * C > max) return { dist: max, type: 0, layers };
+    if (mx < 0 || my < 0 || mx >= M.W || my >= M.H) return { dist: t * C, type: 3, side, u: 0, cell: -1, layers };
+    const cell = my * M.W + mx, v = M.g[cell];
+    if (!v) { lastObst = -2; continue; }
+    const hitU = side ? px + dx * t : py + dy * t;
+    if (v === 2) {
+      const o = M.room.obstacles[M.obst[cell]], f = o && HOROR_FURNITURE[o.kind];
+      if (f && f.h < HOROR.WALL_H - 10) {   // nízký nábytek: je přes něj vidět
+        if (M.obst[cell] !== lastObst && layers.length < 4) layers.push({ dist: t * C, side, u: hitU, cell, f, kind: o.kind });
+        lastObst = M.obst[cell];
+        continue;
+      }
+    }
+    const bx = M.room.x + (px + dx * (t - 0.08)) * C, by = M.room.y + (py + dy * (t - 0.08)) * C;
+    return { dist: t * C, type: v, side, u: hitU, cell, part: M.room.parts ? amongPartAt(M.room, bx, by) : null, layers };
+  }
+  return { dist: max, type: 0, layers };
+}
+// Patro místnosti (pro šipku na schodech)
+const hororFloorNo = (id) => (id === 'patroA2' ? 2 : id === 'patroA' ? 1 : 0);
+// Nápis nad dveřmi: kam vedou
+function hororSignText(M, d) {
+  if (d.exit) return { t: 'VÝCHOD', c: [30, 130, 60] };
+  if (d.hidden) {   // konec schodů
+    const up = hororFloorNo(d.to) > hororFloorNo(M.id);
+    return { t: `${up ? '↑' : '↓'} ${ROOMS[d.to].name}`, c: [40, 90, 60] };
+  }
+  return d.open ? { t: ROOMS[d.to].name, c: [30, 60, 140] } : { t: `🔒 ${ROOMS[d.to].name}`, c: [80, 80, 90] };
+}
 function renderHoror() {
   const H = state.horor;
   if (!H) return;
@@ -634,70 +768,75 @@ function renderHoror() {
   ctx.fillStyle = '#000000';
   ctx.fillRect(left - 20, -20, width + 40, Ht + 40);
   const horizon = Ht / 2 + H.bob, tanF = Math.tan(HOROR.FOV / 2), proj = (width / 2) / tanF;
-  const st = hororStyle(p.room, M.room.parts ? amongPartAt(M.room, p.x, p.y) : null), rgba = (c, a) => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`;
-  const fg = ctx.createRadialGradient(left + width / 2, Ht + 40, 20, left + width / 2, Ht + 40, Ht * 0.75);
-  fg.addColorStop(0, rgba(st.floor, 0.95 * H.flicker)); fg.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = fg; ctx.fillRect(left, horizon, width, Ht - horizon);
-  const cg = ctx.createRadialGradient(left + width / 2, -60, 20, left + width / 2, -60, Ht * 0.6);
-  cg.addColorStop(0, rgba(st.ceil, 0.22 * H.flicker)); cg.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = cg; ctx.fillRect(left, 0, width, horizon);
-  // zdi
-  const cols = Math.ceil(width / HOROR.COL_W), zbuf = new Float32Array(cols);
+  const cols = Math.ceil(width / HOROR.COL_W), rays = [];
   for (let i = 0; i < cols; i++) {
     const cam = (i + 0.5) / cols * 2 - 1, ra = p.a + Math.atan(cam * tanF);
-    const hit = hororCast(M, p.x, p.y, ra, 1600);
-    const perp = Math.max(1, hit.dist * Math.cos(ra - p.a));
-    zbuf[i] = perp;
-    if (!hit.type) continue;
-    const top = horizon - (HOROR.WALL_H - HOROR.EYE) / perp * proj, bot = horizon + HOROR.EYE / perp * proj;
-    const l = hororLightAt(H, perp, cam) * (hit.side ? 0.72 : 1);
-    if (l < 0.01) continue;
-    const u = hit.u - Math.floor(hit.u), seam = (Math.floor(hit.u) % 8 === 0 && u < 0.18) ? 0.6 : 1;
-    const x = left + i * HOROR.COL_W, cw = HOROR.COL_W + 1;
-    const shade = (c, k) => `rgb(${Math.round(c[0] * l * k)}, ${Math.round(c[1] * l * k)}, ${Math.round(c[2] * l * k)})`;
-    const ws = hororStyle(p.room, hit.part);
-    if (hit.type === 2) {   // nábytek podle druhu
-      const o = M.room.obstacles[M.obst[hit.cell]], f = (o && HOROR_FURNITURE[o.kind]) || { c: [120, 86, 52], h: 70 };
-      const ft = horizon - (f.h - HOROR.EYE) / perp * proj;
-      if (f.h < HOROR.WALL_H) { ctx.fillStyle = shade(ws.top, 0.5); ctx.fillRect(x, top, cw, ft - top); }
-      ctx.fillStyle = shade(f.c, f.h >= HOROR.WALL_H - 10 && (u < 0.12 || u > 0.88) ? 0.8 : 1);
-      ctx.fillRect(x, ft, cw, bot - ft);
-      if (f.hide && u > 0.46 && u < 0.54) { ctx.fillStyle = shade([30, 22, 14], 1); ctx.fillRect(x, ft + (bot - ft) * 0.1, cw, (bot - ft) * 0.85); }   // spára dvířek
-      if (o && o.kind === 'pillar') { ctx.fillStyle = shade([40, 40, 44], 1); ctx.fillRect(x, bot - 5 / perp * proj, cw, 5 / perp * proj); }
-      continue;
-    }
-    if (hit.type === 4) {   // dveře: průchozí bílé (vchod hnědý), zamčené tmavší, východ zelený s klíči
-      const d = M.doors[M.doorAt[hit.cell]] || {}, dtop = horizon - (105 - HOROR.EYE) / perp * proj;
-      ctx.fillStyle = shade(ws.top, 1); ctx.fillRect(x, top, cw, dtop - top);
-      const dc = d.exit ? (H.got >= HOROR.KEYS ? [120, 200, 120] : [110, 92, 70]) : d.open ? [236, 236, 230] : [120, 112, 100];
-      // kde na dveřích paprsek je (0–1 přes celou šířku dveří, ne po buňkách) – rám a klika jen jednou
-      const wpos = (hit.side ? M.room.x : M.room.y) + hit.u * M.C, du = d.x !== undefined ? (hit.side ? (wpos - d.x) / d.w : (wpos - d.y) / d.h) : u;
-      ctx.fillStyle = shade(dc, du < 0.06 || du > 0.94 ? 0.55 : 1); ctx.fillRect(x, dtop, cw, bot - dtop);
-      if (d.open && !d.exit && du > 0.8 && du < 0.86) { ctx.fillStyle = shade([200, 170, 60], 1); ctx.fillRect(x, horizon + (HOROR.EYE - 52) / perp * proj, cw, 4 / perp * proj); }   // klika
-      continue;
-    }
-    const low = horizon + (HOROR.EYE - ws.lowH) / perp * proj, bandH = ws.bandH / perp * proj;
-    ctx.fillStyle = shade(ws.top, seam); ctx.fillRect(x, top, cw, low - top);
-    if (ws.panel && u > 0.12 && u < 0.88 && (Math.floor(hit.u) % 7) > 0) {
-      const py = horizon - (122 - HOROR.EYE) / perp * proj, ph = 62 / perp * proj;
-      ctx.fillStyle = shade(ws.panel, 1); ctx.fillRect(x, py, cw, ph);
-    }
-    ctx.fillStyle = shade(ws.low, seam); ctx.fillRect(x, low, cw, bot - low);
-    ctx.fillStyle = shade(ws.band, 1);
-    if (ws.panel) ctx.fillRect(x, low - bandH, cw, bandH); else ctx.fillRect(x, bot - bandH, cw, bandH);
+    rays.push({ cam, ra, dx: Math.cos(ra), dy: Math.sin(ra), cos: Math.cos(ra - p.a) });
   }
-  // postavy a klíče v této místnosti (od nejvzdálenějšího)
+  hororDrawFloor(H, M, cols, rays, horizon, proj, left, width, Ht);
+  // zdi, dveře, schody a nábytek (od nejvzdálenějšího)
+  const zbuf = new Float32Array(cols);
+  for (let i = 0; i < cols; i++) {
+    const ray = rays[i], hit = hororCastView(M, p.x, p.y, ray.ra, 1600);
+    const perp = Math.max(1, hit.dist * ray.cos);
+    zbuf[i] = perp;
+    const x = left + i * HOROR.COL_W, cw = HOROR.COL_W + 1;
+    const ws = hororStyle(p.room, hit.part || (M.room.parts ? amongPartAt(M.room, p.x, p.y) : null));
+    if (hit.type) hororDrawWall(H, M, hit, perp, ray.cam, x, cw, horizon, proj, ws);
+    for (let k = hit.layers.length - 1; k >= 0; k--) {   // nízký nábytek před zdí
+      const ly = hit.layers[k], lp = Math.max(1, ly.dist * ray.cos), l = hororLightAt(H, lp, ray.cam) * (ly.side ? 0.72 : 1);
+      if (l < 0.01) continue;
+      const shade = (c, kk) => `rgb(${Math.round(c[0] * l * kk)}, ${Math.round(c[1] * l * kk)}, ${Math.round(c[2] * l * kk)})`;
+      const ft = horizon - (ly.f.h - HOROR.EYE) / lp * proj, bot = horizon + HOROR.EYE / lp * proj, u = ly.u - Math.floor(ly.u);
+      if (ly.kind === 'ironrail') {   // zábradlí: madlo a tyčky (mezi nimi je vidět)
+        ctx.fillStyle = shade([120, 80, 46], 1); ctx.fillRect(x, ft, cw, Math.max(1, 5 / lp * proj));
+        if (Math.floor(ly.u * 2.5) % 2 === 0) { ctx.fillStyle = shade([30, 30, 34], 1); ctx.fillRect(x, ft, Math.max(1, cw * 0.5), bot - ft); }
+        continue;
+      }
+      ctx.fillStyle = shade(ly.f.c, 1); ctx.fillRect(x, ft, cw, bot - ft);
+      ctx.fillStyle = shade(ly.f.c, 1.18); ctx.fillRect(x, ft, cw, Math.max(1, 3 / lp * proj));   // světlejší hrana desky
+      if (u < 0.1) { ctx.fillStyle = shade(ly.f.c, 0.7); ctx.fillRect(x, ft, cw, bot - ft); }
+    }
+  }
+  // cedulky nad dveřmi, lampy, klíče a Láďa (od nejvzdálenějšího)
   const sprites = H.keys.filter((k) => !k.got && k.room === p.room).map((k) => ({ ...k, kind: 'key' }));
   if (H.phase !== 'caught' && H.lada.room === p.room) sprites.push({ x: H.lada.x, y: H.lada.y, kind: 'lada' });
+  for (const d of M.doors) {
+    if ((d.ix - d.cx) * (p.x - d.cx) + (d.iy - d.cy) * (p.y - d.cy) <= 0) continue;   // jen ze strany místnosti
+    const half = Math.min(d.w, d.h) / 2, vx = d.ix - d.cx, vy = d.iy - d.cy, vl = Math.hypot(vx, vy) || 1;
+    sprites.push({ x: d.cx + vx / vl * half, y: d.cy + vy / vl * half, kind: 'sign', d });
+  }
+  for (const lamp of M.lamps) sprites.push({ x: lamp.x, y: lamp.y, kind: 'lamp' });
   sprites.sort((a, b) => hororDist(b, p) - hororDist(a, p));
   for (const s of sprites) {
     const d = hororDist(s, p), ang = hororAngle(Math.atan2(s.y - p.y, s.x - p.x) - p.a);
     if (Math.abs(ang) > HOROR.FOV / 2 + 0.25 || d < 8) continue;
     const perp = d * Math.cos(ang), sx = left + width / 2 + Math.tan(ang) * proj;
-    const col = Math.floor((sx - left) / HOROR.COL_W);
-    if (col >= 0 && col < cols && perp > zbuf[col] + 6) continue;
-    const cam = Math.tan(ang) / tanF, l = Math.max(hororLightAt(H, perp, cam), s.kind === 'key' ? 0.35 : 0);
-    const feet = horizon + HOROR.EYE / perp * proj;
+    const col = Math.max(0, Math.min(cols - 1, Math.floor((sx - left) / HOROR.COL_W)));
+    if (perp > zbuf[col] + (s.kind === 'sign' ? 14 : 6)) continue;   // za zdí
+    const cam = Math.tan(ang) / tanF, l0 = hororLightAt(H, perp, cam);
+    const feet = horizon + HOROR.EYE / perp * proj, hy = (h) => horizon - (h - HOROR.EYE) / perp * proj;
+    if (s.kind === 'sign') {   // cedulka nad dveřmi (čitelná i v šeru)
+      if (d > 760) continue;
+      const st = hororSignText(M, s.d), l = Math.max(0.5, l0), fs = Math.max(7, Math.min(26, 15 / perp * proj * 0.6));
+      ctx.font = `bold ${Math.round(fs)}px sans-serif`;
+      const tw = ctx.measureText(st.t).width + fs, y = hy(122);
+      ctx.fillStyle = `rgb(${st.c[0] * l | 0}, ${st.c[1] * l | 0}, ${st.c[2] * l | 0})`;
+      ctx.fillRect(sx - tw / 2, y - fs * 0.75, tw, fs * 1.5);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 * l})`; ctx.lineWidth = Math.max(1, fs / 10); ctx.strokeRect(sx - tw / 2, y - fs * 0.75, tw, fs * 1.5);
+      ctx.fillStyle = `rgb(${255 * l | 0}, ${255 * l | 0}, ${255 * l | 0})`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(st.t, sx, y + 1);
+      continue;
+    }
+    if (s.kind === 'lamp') {   // kulatá lampa na šňůře (v noci zhasnutá)
+      const l = Math.max(0.12, l0), r = 9 / perp * proj, gy = hy(108);
+      ctx.strokeStyle = `rgba(20, 20, 20, ${0.9 * l})`; ctx.lineWidth = Math.max(1, 0.8 / perp * proj);
+      ctx.beginPath(); ctx.moveTo(sx, hy(HOROR.WALL_H)); ctx.lineTo(sx, gy - r); ctx.stroke();
+      ctx.fillStyle = `rgb(${236 * l | 0}, ${236 * l | 0}, ${230 * l | 0})`;
+      ctx.beginPath(); ctx.arc(sx, gy, r, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    const l = Math.max(l0, s.kind === 'key' ? 0.35 : 0);
     if (s.kind === 'key') {
       const size = Math.max(10, 34 / perp * proj * 0.35), y = feet - 30 / perp * proj + Math.sin(H.t * 3) * 3;
       const g = ctx.createRadialGradient(sx, y, 2, sx, y, size * 1.6);
@@ -722,8 +861,8 @@ function renderHoror() {
       ctx.fill();
     }
   }
-  const vg = ctx.createRadialGradient(left + width / 2, Ht / 2, Ht * 0.25, left + width / 2, Ht / 2, width * 0.62);
-  vg.addColorStop(0, 'rgba(0, 0, 0, 0)'); vg.addColorStop(1, 'rgba(0, 0, 0, 0.85)');
+  const vg = ctx.createRadialGradient(left + width / 2, Ht / 2, Ht * 0.3, left + width / 2, Ht / 2, width * 0.66);
+  vg.addColorStop(0, 'rgba(0, 0, 0, 0)'); vg.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
   ctx.fillStyle = vg; ctx.fillRect(left, 0, width, Ht);
   if (H.hidden) {   // ve skříni: tma a škvíra mezi dvířky
     ctx.fillStyle = 'rgba(0, 0, 0, 0.93)';
@@ -734,6 +873,67 @@ function renderHoror() {
   if (H.fade > 0) { ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, H.fade / 0.3)})`; ctx.fillRect(left, 0, width, Ht); }
   ctx.restore();
   drawHororHud(H);
+}
+// Jeden sloupec zdi / dveří / konce schodů / vysokého nábytku
+function hororDrawWall(H, M, hit, perp, cam, x, cw, horizon, proj, ws) {
+  const top = horizon - (HOROR.WALL_H - HOROR.EYE) / perp * proj, bot = horizon + HOROR.EYE / perp * proj;
+  const l = hororLightAt(H, perp, cam) * (hit.side ? 0.72 : 1);
+  if (l < 0.01) return;
+  const u = hit.u - Math.floor(hit.u), seam = (Math.floor(hit.u) % 8 === 0 && u < 0.18) ? 0.6 : 1;
+  const shade = (c, k) => `rgb(${Math.round(c[0] * l * k)}, ${Math.round(c[1] * l * k)}, ${Math.round(c[2] * l * k)})`;
+  const hy = (h) => horizon - (h - HOROR.EYE) / perp * proj;
+  if (hit.type === 2) {   // vysoký nábytek (sloupy, skříně, kabinky)
+    const o = M.room.obstacles[M.obst[hit.cell]], f = (o && HOROR_FURNITURE[o.kind]) || { c: [120, 86, 52], h: 130 };
+    const ft = hy(f.h);
+    if (ft > top) { ctx.fillStyle = shade(ws.top, 0.5); ctx.fillRect(x, top, cw, ft - top); }
+    ctx.fillStyle = shade(f.c, u < 0.12 || u > 0.88 ? 0.8 : 1); ctx.fillRect(x, ft, cw, bot - ft);
+    if (f.hide && u > 0.46 && u < 0.54) { ctx.fillStyle = shade([30, 22, 14], 1); ctx.fillRect(x, ft + (bot - ft) * 0.1, cw, (bot - ft) * 0.85); }   // spára dvířek
+    if (o && o.kind === 'pillar') { ctx.fillStyle = shade([40, 40, 44], 1); ctx.fillRect(x, bot - 5 / perp * proj, cw, 5 / perp * proj); }
+    return;
+  }
+  if (hit.type === 4 || hit.type === 5) {
+    const d = M.doors[M.doorAt[hit.cell]] || {}, dtop = hy(105);
+    const wpos = (hit.side ? M.room.x : M.room.y) + hit.u * M.C, du = d.x !== undefined ? (hit.side ? (wpos - d.x) / d.w : (wpos - d.y) / d.h) : u;
+    if (hit.type === 5) {   // konec schodů
+      ctx.fillStyle = shade([10, 10, 12], 1); ctx.fillRect(x, top, cw, bot - top);
+      if (hororFloorNo(d.to) > hororFloorNo(M.id)) {   // nahoru: stupně stoupají do tmy (podstupnice tmavší, nášlapy světlé)
+        for (let k = 0; k < 9; k++) {
+          const z = perp + k * 26, f = Math.pow(0.84, k);
+          const yTread = horizon - (k * 17 - HOROR.EYE) / z * proj, yRise = horizon - ((k + 1) * 17 - HOROR.EYE) / z * proj;
+          const z2 = z + 26, yNext = horizon - ((k + 1) * 17 - HOROR.EYE) / z2 * proj;
+          ctx.fillStyle = shade([150, 148, 142], f * 0.75); ctx.fillRect(x, yRise, cw, yTread - yRise);
+          ctx.fillStyle = shade([196, 194, 188], f); ctx.fillRect(x, yNext, cw, yRise - yNext);
+        }
+      } else {   // dolů: jen pár hran, schody mizí pod podlahu
+        for (let k = 1; k <= 6; k++) {
+          const yk = horizon + (bot - horizon) * Math.pow(0.72, k);
+          ctx.fillStyle = shade([150, 148, 142], Math.pow(0.7, k)); ctx.fillRect(x, yk, cw, Math.max(1, (bot - horizon) * 0.03));
+        }
+      }
+      return;
+    }
+    ctx.fillStyle = shade(ws.top, 1); ctx.fillRect(x, top, cw, dtop - top);
+    const dc = d.exit ? (H.got >= HOROR.KEYS ? [120, 200, 120] : [110, 92, 70]) : d.open ? [236, 236, 230] : [120, 112, 100];
+    const frame = du < 0.06 || du > 0.94;
+    ctx.fillStyle = shade(dc, frame ? 0.55 : 1); ctx.fillRect(x, dtop, cw, bot - dtop);
+    if (!frame && !d.exit) {   // prosklené výplně (jako školní dveře na fotkách) a příčka uprostřed
+      const inGlass = (du > 0.16 && du < 0.44) || (du > 0.56 && du < 0.84);
+      if (inGlass) {
+        ctx.fillStyle = shade(d.open ? [72, 86, 98] : [60, 62, 68], 1);
+        ctx.fillRect(x, hy(98), cw, hy(70) - hy(98));
+        ctx.fillRect(x, hy(64), cw, hy(46) - hy(64));
+      }
+      if (du > 0.8 && du < 0.86) { ctx.fillStyle = shade([200, 170, 60], 1); ctx.fillRect(x, hy(52), cw, 4 / perp * proj); }   // klika
+    }
+    return;
+  }
+  // zeď podle dílu: nahoře světlá (ve vstupu okrová s krémovými plochami), dole sokl, pruh / lišta
+  const low = horizon + (HOROR.EYE - ws.lowH) / perp * proj, bandH = ws.bandH / perp * proj;
+  ctx.fillStyle = shade(ws.top, seam); ctx.fillRect(x, top, cw, low - top);
+  if (ws.panel && u > 0.12 && u < 0.88 && (Math.floor(hit.u) % 7) > 0) { ctx.fillStyle = shade(ws.panel, 1); ctx.fillRect(x, hy(122), cw, 62 / perp * proj); }
+  ctx.fillStyle = shade(ws.low, seam); ctx.fillRect(x, low, cw, bot - low);
+  ctx.fillStyle = shade(ws.band, 1);
+  if (ws.panel) ctx.fillRect(x, low - bandH, cw, bandH); else ctx.fillRect(x, bot - bandH, cw, bandH);
 }
 function drawHororHud(H) {
   const W = CONFIG.WIDTH, Ht = CONFIG.HEIGHT, keysHint = !isTouchHint();
