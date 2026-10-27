@@ -161,6 +161,7 @@ function mpActivity() {
   return '';
 }
 function mpMyRecord() {
+  if (hororNetOn()) return hororMyRecord();   // Bacha na Láďu online (40_horor_online.js)
   const room = state.room, p = state.player;
   const rec = { n: mp.name, r: room.id, x: Math.round(p.x - room.x), y: Math.round(p.y - room.y) };
   const a = mpActivity();
@@ -208,7 +209,7 @@ window.addEventListener('pagehide', () => { if (mp.on) mpRemoveMe(); });
 function updateMultiplayer(dt) {
   if (!mp.on || !mpReady()) return;
   if (!mp.es) mpConnect();
-  const inGame = state.room && ['playing', 'chess', 'foosball', 'basket', 'pingpong', 'skins'].includes(state.screen);
+  const inGame = (state.room && ['playing', 'chess', 'foosball', 'basket', 'pingpong', 'skins'].includes(state.screen)) || hororNetOn();   // horor online (40_horor_online.js)
   mp.sendT -= dt;
   mp.beatT -= dt;
   if (inGame) {

@@ -138,7 +138,7 @@ const amongAlive = (o) => amongNow() - o.t < MP.STALE;
 function amongGames() {
   const games = {};
   for (const o of Object.values(mp.others)) {
-    if (!o.g || !amongAlive(o)) continue;
+    if (!o.g || !amongAlive(o) || o.g.startsWith('lada')) continue;   // lada… = hry Bacha na Láďu (40_horor_online.js)
     (games[o.g] = games[o.g] || { id: o.g, players: [] }).players.push({ id: o.id, n: o.n, gj: o.gj || 0, gp: o.gp });
   }
   if (amongOn() && among.game) (games[among.game] = games[among.game] || { id: among.game, players: [] }).players.push({ id: mp.id, n: mp.name, gj: among.joined, gp: among.phase !== 'lobby', me: true });
