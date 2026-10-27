@@ -162,7 +162,7 @@ function hororApplyS(H, S) {
     }
     H.open = new Set(S.open || []); H.taken = new Set(S.taken || []); H.sp = { ...(S.sp || {}) }; H.out = (S.out || []).slice();
     if (S.kk && H.kk && S.kk.got && !H.kk.got && S.kk.by !== mp.id) hororSay(`🗝 ${amongName(S.kk.by)} našel klíč od Křiváčka – kabinet je odemčený!`, 3.5);
-    if (S.gun && H.gun && S.gun.by && !H.gun.by && S.gun.by !== mp.id) hororSay(`🔫 ${amongName(S.gun.by)} má zbraň!`, 3);
+    if (S.gun && H.gun && S.gun.by && !H.gun.by && S.gun.by !== mp.id) hororSay(`${amongName(S.gun.by)} má pistoli!`, 3);
     if (S.lada && S.lada.mode === 'stun' && H.lada && H.lada.mode !== 'stun') hororSay('💤 Láďa dostal zásah a spí!', 3);
     H.kk = S.kk ? { ...S.kk } : null; H.gun = S.gun ? { ...S.gun } : null; H.down = { ...(S.dn || {}) };
     H.ladaT = S.lada;

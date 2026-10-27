@@ -857,7 +857,7 @@ function hororItemKey(H, which) {
 function hororShoot(H) {
   const me = hororMe(), g = H.gun;
   if (!g || g.by !== me || H.ghost || H.downed) return;
-  if (g.ammo <= 0) { hororSay('🔫 Došly náboje.', 1.5); return; }
+  if (g.ammo <= 0) { hororSay('Došly náboje.', 1.5); return; }
   const L = H.lada, p = H.p;
   let hit = false;
   if (L.room === p.room && L.mode !== 'stun') {
@@ -915,7 +915,7 @@ function hororAct(H, who, d) {
   } else if (d.k === 'gun') {
     if (!H.gun || H.gun.by) return;
     H.gun.by = who;
-    if (me) { hororTone(330, 0.2, 'square', 0.2); hororSay(`🔫 Máš zbraň! Nábojů: ${H.gun.ammo}. Střílí se Q nebo klikem – zásah uspí Láďu na ${HOROR.STUN} s.`, 5); }
+    if (me) { hororTone(330, 0.2, 'square', 0.2); hororSay(`Máš pistoli! Nábojů: ${H.gun.ammo}. Střílí se Q nebo klikem – zásah uspí Láďu na ${HOROR.STUN} s.`, 5); }
   } else if (d.k === 'shoot') {
     if (!H.gun || H.gun.by !== who || H.gun.ammo <= 0) return;
     H.gun.ammo--;
@@ -1459,6 +1459,29 @@ function hororSignText(M, d) {
   }
   return d.open && !hororLockedDoor(state.horor, d) ? { t: ROOMS[d.to].name, c: [30, 60, 140] } : { t: `🔒 ${ROOMS[d.to].name}`, c: [80, 80, 90] };
 }
+// Pistole (kreslená, ne emoji): černý závěr s hlavní, rukojeť s dřevěnými střenkami, lučík a spoušť.
+// (cx, cy) = střed, size = délka, k = jas (světlo baterky), hlaveň doleva
+function hororDrawPistol(cx, cy, size, k) {
+  const s = size / 40, c = (r, g, b) => `rgb(${Math.round(r * k)}, ${Math.round(g * k)}, ${Math.round(b * k)})`;
+  ctx.save();
+  ctx.translate(cx, cy); ctx.scale(s, s); ctx.translate(-20, -12);
+  ctx.fillStyle = c(28, 28, 32);
+  ctx.fillRect(0, 2, 34, 8);                    // závěr
+  ctx.fillRect(-4, 4, 5, 4);                    // ústí hlavně
+  ctx.fillStyle = c(70, 70, 78); ctx.fillRect(2, 2, 30, 2);   // odlesk na závěru
+  ctx.fillStyle = c(20, 20, 24);
+  for (let x = 22; x < 32; x += 3) ctx.fillRect(x, 4, 1.2, 5);   // drážky na závěru
+  ctx.fillRect(1, 0.5, 2, 2); ctx.fillRect(30, 0.5, 2, 2);   // mířidla
+  ctx.beginPath();                               // rukojeť (šikmo dozadu)
+  ctx.moveTo(22, 10); ctx.lineTo(33, 10); ctx.lineTo(37, 24); ctx.lineTo(27, 25); ctx.closePath();
+  ctx.fillStyle = c(28, 28, 32); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(24.5, 12); ctx.lineTo(31.5, 12); ctx.lineTo(34.5, 22.5); ctx.lineTo(28, 23); ctx.closePath();
+  ctx.fillStyle = c(110, 70, 40); ctx.fill();    // dřevěné střenky
+  ctx.strokeStyle = c(28, 28, 32); ctx.lineWidth = 1.6;   // lučík
+  ctx.beginPath(); ctx.moveTo(15, 10); ctx.quadraticCurveTo(15, 17, 22, 16); ctx.stroke();
+  ctx.fillStyle = c(28, 28, 32); ctx.fillRect(18, 10, 1.6, 4);   // spoušť
+  ctx.restore();
+}
 // Jedna věc v pohledu (cedulka, lampa, baterka, klíč, kamarád, Láďa)
 function hororSprite(H, M, s, d, perp, sx, l0, fh, horizon, proj, E) {
   const hy = (h) => horizon - (fh + h - E) / perp * proj, feet = hy(0);
@@ -1507,8 +1530,8 @@ function hororSprite(H, M, s, d, perp, sx, l0, fh, horizon, proj, E) {
     const g = ctx.createRadialGradient(sx, y, 2, sx, y, size * 1.6);
     g.addColorStop(0, `rgba(${s.glow}, 0.55)`); g.addColorStop(1, `rgba(${s.glow}, 0)`);
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, y, size * 1.6, 0, Math.PI * 2); ctx.fill();
-    ctx.font = `${Math.round(size)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(s.icon, sx, y);
+    if (s.icon === '🔫') hororDrawPistol(sx, y, size * 1.5, Math.max(0.35, Math.min(1.3, l0 + 0.3)));
+    else { ctx.font = `${Math.round(size)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.icon, sx, y); }
     return;
   }
   if (s.kind === 'mate' || s.kind === 'self') {   // kamarád (online) / já (očka): postava, jméno, baterka; ležící = na zemi
@@ -1834,7 +1857,8 @@ function drawHororHud(H) {
       if (!n && !(i === 3 && g)) return;
       const r = HOROR_ITEM_BTNS[i];
       roundRectPath(r.x, r.y, r.w, r.h, 6); ctx.fillStyle = 'rgba(0, 0, 0, 0.55)'; ctx.fill();
-      ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffffff'; ctx.fillText(ic, r.x + 15, r.y + r.h / 2 + 1);
+      ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffffff';
+      if (i === 3) hororDrawPistol(r.x + 15, r.y + r.h / 2 + 1, 22, 1.6); else ctx.fillText(ic, r.x + 15, r.y + r.h / 2 + 1);
       ctx.font = 'bold 11px sans-serif'; ctx.fillText(`${n || 0}`, r.x + 33, r.y + 12);
       if (keysHint) { ctx.fillStyle = '#9e9e9e'; ctx.fillText(key, r.x + 33, r.y + 26); }
     });
@@ -1883,7 +1907,7 @@ function drawHororHud(H) {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, Ht);
     drawOutlinedText('👻 BACHA NA LÁĎU', W / 2, 130, 'bold 46px sans-serif', '#ff4d4d', 'middle');
     ['Je noc. Zůstal jsi zamčený ve škole.', 'Po chodbách a třídách chodí Láďa… a hledá tě.', `Najdi ${HOROR.KEYS} klíčů (pokaždé jinde) a uteč hlavním vchodem.`,
-      'Když tě uvidí, utíkej – ztrať se mu z očí, nebo se schovej.', 'Baterka se vybíjí – nové jsou v šuplících. Klíč od Křiváčka 🗝 odemkne zbraň 🔫.']
+      'Když tě uvidí, utíkej – ztrať se mu z očí, nebo se schovej.', 'Baterka se vybíjí – nové jsou v šuplících. Klíč od Křiváčka 🗝 odemkne jeho kabinet s pistolí.']
       .forEach((t, i) => drawOutlinedText(t, W / 2, 185 + i * 28, 'bold 16px sans-serif', '#ffffff', 'middle', W - 40));
     drawOutlinedText(keysHint ? 'WASD – chůze · myš – rozhlížení · Shift – sprint · E – šuplík · F – schovat · R – baterka' : 'Joystick vlevo – chůze (naplno = sprint) · táhni vpravo – rozhlížení', W / 2, 335, 'bold 13px sans-serif', '#cfcfcf', 'middle', W - 30);
     drawOutlinedText(`🎧 Nejlepší se sluchátky   ·   💰 ${typeof mainMoneyGet === 'function' ? mainMoneyGet() : 0} Kč   ·   za útěk +250 Kč`, W / 2, 365, 'bold 14px sans-serif', '#ffd54a', 'middle');
