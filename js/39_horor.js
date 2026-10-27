@@ -256,6 +256,169 @@ function hororModel(o, zb) {
 const HOROR_MAPS = {};
 state.horor = null;
 
+// --- Kresba místnosti z normální hry → barvy, okna, tabule, schody ---
+// Kresba se nakreslí do neviditelného obrázku (ctx se na chvíli přesměruje), z pixelů se pak vezme barva
+// podlahy a zdí, okna (modré sklo), tabule a plakáty na zdech. Ramena schodů se zachytí z volání
+// drawStoneFlight / drawStairFlight / drawGraniteFlight (rect + směr stoupání); šatny mají schody kreslené ručně.
+const HOROR_EXTRA_FLIGHTS = {
+  satny2: [[170, 340, 70, 80, 'right', 18], [20, 123, 150, 217, 'down', 18]],
+  satny3: [[280, 100, 120, 225, 'up', 20], [156, 20, 124, 80, 'left', 20]],
+};
+function hororOffscreen(w, h, fn) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const off = cv.getContext('2d'), proto = CanvasRenderingContext2D.prototype, keys = [];
+  for (const k of Object.getOwnPropertyNames(proto)) {
+    if (k === 'constructor' || k === 'canvas') continue;
+    const d = Object.getOwnPropertyDescriptor(proto, k);
+    if (typeof d.value === 'function') Object.defineProperty(ctx, k, { configurable: true, writable: true, value: (...a) => off[k](...a) });
+    else if (d.get) Object.defineProperty(ctx, k, { configurable: true, get: () => off[k], set: (v) => { off[k] = v; } });
+    else continue;
+    keys.push(k);
+  }
+  try { fn(); } finally { for (const k of keys) delete ctx[k]; }
+  return off;
+}
+function hororArtScan(room) {
+  const S = 0.5, w = Math.ceil(room.w * S), h = Math.ceil(room.h * S), flights = [];
+  const keep = { s: drawStoneFlight, n: drawStairFlight, g: drawGraniteFlight };
+  let data = null;
+  try {
+    drawStoneFlight = (f, d, st) => { flights.push({ x: f.x, y: f.y, w: f.w, h: f.h, dir: d, step: st || 16 }); keep.s(f, d, st); };
+    drawStairFlight = (f, d, st) => { flights.push({ x: f.x, y: f.y, w: f.w, h: f.h, dir: d, step: st || 16 }); keep.n(f, d, st); };
+    drawGraniteFlight = (f, d) => { flights.push({ x: f.x, y: f.y, w: f.w, h: f.h, dir: d || 'up', step: 16 }); keep.g(f, d); };
+    const off = hororOffscreen(w, h, () => {
+      cullReset();
+      ctx.setTransform(S, 0, 0, S, -room.x * S, -room.y * S);
+      const art = ROOM_ART[room.id];
+      if (room.parts) {
+        for (const part of room.parts) ROOM_ART[part.art].draw({ ...part.frame, id: part.id, obstacles: room.obstacles.filter((o) => o.part === part.id), doors: room.doors.filter((d) => d.part === part.id) });
+        for (const o of room.openings || []) { const [a] = o.fill || ['old']; if (FLOOR_FILLS[a]) FLOOR_FILLS[a](o); }
+      } else if (art) art.draw(room);
+      else { drawRect(room, room.floorColor || '#b0a890'); for (const wall of buildRoomWalls(room)) drawRect(wall, room.wallColor || '#e8e4dc'); }
+    });
+    data = off.getImageData(0, 0, w, h).data;
+  } catch (e) { data = null; }
+  finally { drawStoneFlight = keep.s; drawStairFlight = keep.n; drawGraniteFlight = keep.g; }
+  for (const [x, y, fw, fh, dir, step] of HOROR_EXTRA_FLIGHTS[room.id] || []) flights.push({ x: room.x + x, y: room.y + y, w: fw, h: fh, dir, step });
+  return { S, w, h, data, flights };
+}
+// Výška na rameni schodů f v bodě (x, y): plynule, nebo po stupních
+function hororFlightAlong(f, x, y) {
+  const a = f.dir === 'up' ? f.y + f.h - y : f.dir === 'down' ? y - f.y : f.dir === 'left' ? f.x + f.w - x : x - f.x;
+  return Math.max(0, Math.min(f.dir === 'up' || f.dir === 'down' ? f.h : f.w, a));
+}
+const hororFlightH = (f, x, y, steps) => {
+  const a = hororFlightAlong(f, x, y), RISE = HOROR.FL / 24, n = Math.max(1, Math.round((f.dir === 'up' || f.dir === 'down' ? f.h : f.w) / f.step));
+  return f.base + (steps ? Math.min(n - 0.5, Math.floor(a / f.step) + 0.5) : a / f.step) * RISE;
+};
+// Z kresby: barva podlahy (po 4 px), zdi (barva, okno / tabule / plakát), ramena schodů a jejich výšky
+function hororMapArt(M, scan) {
+  const { room, W, H, C, g } = M;
+  // --- výšky: od místa, kde se začíná (start / první dveře), přes ramena schodů (BFS po buňkách)
+  const flights = scan.flights.filter((f) => !(M.stairs && M.stairs.some((s) => f.x + f.w / 2 >= s.x && f.y + f.h / 2 >= s.y && f.x + f.w / 2 < s.x + 320 && f.y + f.h / 2 < s.y + 340)));
+  flights.forEach((f) => { f.base = NaN; });
+  const fi = new Int16Array(W * H).fill(-1), hs = new Float32Array(W * H).fill(NaN);
+  flights.forEach((f, k) => {
+    for (let j = Math.floor((f.y - room.y) / C); j < Math.ceil((f.y + f.h - room.y) / C); j++)
+      for (let i = Math.floor((f.x - room.x) / C); i < Math.ceil((f.x + f.w - room.x) / C); i++) {
+        const cx = room.x + (i + 0.5) * C, cy = room.y + (j + 0.5) * C;
+        if (i >= 0 && j >= 0 && i < W && j < H && cx >= f.x && cx < f.x + f.w && cy >= f.y && cy < f.y + f.h) fi[j * W + i] = k;
+      }
+  });
+  const manual = (c) => M.stairs && M.fh[c] !== 0;
+  const walk = (c) => g[c] === 0 || g[c] === 6;
+  let seed = null;
+  if (M.id === HOROR.START.room) seed = HOROR.START;
+  else { const d = M.doors.find((q) => q.open && !q.hidden) || M.doors[0]; if (d) seed = { x: d.ix, y: d.iy }; }
+  if (flights.length && seed) {
+    const s0 = Math.floor((seed.y - room.y) / C) * W + Math.floor((seed.x - room.x) / C), q = [];
+    if (s0 >= 0 && s0 < W * H) { hs[s0] = manual(s0) ? M.fh[s0] : 0; q.push(s0); }
+    const cxy = (c) => [room.x + (c % W + 0.5) * C, room.y + (Math.floor(c / W) + 0.5) * C];
+    for (let h = 0; h < q.length; h++) {
+      const p = q[h], pi = p % W, [px, py] = cxy(p);
+      for (const [d, ok] of [[1, pi < W - 1], [-1, pi > 0], [W, true], [-W, true]]) {
+        const c = p + d;
+        if (!ok || c < 0 || c >= W * H || !Number.isNaN(hs[c]) || !walk(c)) continue;
+        const [x, y] = cxy(c);
+        let v;
+        if (manual(c)) v = hororStairH(M.stairs[0].floor, x - M.stairs[0].x, y - M.stairs[0].y, false);
+        else if (fi[c] >= 0) {
+          const f = flights[fi[c]];
+          if (Number.isNaN(f.base)) { const from = fi[p] === fi[c] ? hs[p] : hs[p]; f.base = from - hororFlightAlong(f, (x + px) / 2, (y + py) / 2) / f.step * (HOROR.FL / 24); }
+          v = hororFlightH(f, x, y, false);
+        } else if (fi[p] >= 0) v = hororFlightH(flights[fi[p]], x, y, false);
+        else v = hs[p];
+        hs[c] = v; q.push(c);
+      }
+    }
+    for (let c = 0; c < W * H; c++) {
+      if (Number.isNaN(hs[c]) || manual(c)) continue;
+      const [x, y] = cxy(c);
+      const v = fi[c] >= 0 && !Number.isNaN(flights[fi[c]].base) ? hororFlightH(flights[fi[c]], x, y, true) : hs[c];
+      if (Math.abs(v) > 0.5) { M.fh[c] = v; if (v > 0) M.ch[c] = Math.max(M.ch[c], v + HOROR.WALL_H); }
+    }
+    // nábytek a zábradlí stojí na sousední podlaze
+    for (let pass = 0; pass < 3; pass++) for (let c = 0; c < W * H; c++) {
+      if (g[c] !== 2 || M.fh[c] !== 0) continue;
+      const ci = c % W;
+      for (const [d, ok] of [[1, ci < W - 1], [-1, ci > 0], [W, true], [-W, true]]) if (ok && c + d >= 0 && c + d < W * H && M.fh[c + d] !== 0 && g[c + d] !== 1) { M.fh[c] = M.fh[c + d]; break; }
+    }
+  }
+  M.flights = flights.filter((f) => !Number.isNaN(f.base)); M.flightsAll = flights;
+  M.fi = fi;
+  if (!scan.data) return;
+  // --- barvy z kresby
+  const D = scan.data, S = scan.S, aw = scan.w, ah = scan.h;
+  const px = (x, y) => {
+    const i = Math.floor((x - room.x) * S), j = Math.floor((y - room.y) * S);
+    if (i < 0 || j < 0 || i >= aw || j >= ah) return null;
+    const o = (j * aw + i) * 4;
+    return [D[o], D[o + 1], D[o + 2]];
+  };
+  // podlaha po 4 px (pro podlahu ve 3D) a barva buňky (schody)
+  const fw = Math.ceil(room.w / 4), fhh = Math.ceil(room.h / 4), fc = new Uint8Array(fw * fhh * 3);
+  for (let j = 0; j < fhh; j++) for (let i = 0; i < fw; i++) {
+    const c = px(room.x + i * 4 + 2, room.y + j * 4 + 2);
+    if (c) { const o = (j * fw + i) * 3; fc[o] = c[0]; fc[o + 1] = c[1]; fc[o + 2] = c[2]; }
+  }
+  M.fc = fc; M.fcw = fw; M.fch = fhh;
+  M.cellCol = (c) => { const i = Math.min(fw - 1, Math.floor(((c % W) + 0.5) * C / 4)), j = Math.min(fhh - 1, Math.floor((Math.floor(c / W) + 0.5) * C / 4)), o = (j * fw + i) * 3; return [fc[o], fc[o + 1], fc[o + 2]]; };
+  // zdi: barva, okno (1), tabule (2), plakát (3)
+  const wcol = new Uint8Array(W * H * 3), wft = new Uint8Array(W * H), wfc = new Uint8Array(W * H * 3);
+  const lum = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11, glass = (c) => c[2] >= 205 && c[1] >= 205 && c[0] >= 180 && c[2] >= c[0] + 10;   // světle modré sklo (ne šedomodrý pruh)
+  for (let c = 0; c < W * H; c++) {
+    if (g[c] !== 1) continue;
+    const i = c % W, j = Math.floor(c / W);
+    let n = null;
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const ni = i + dx, nj = j + dy;
+      if (ni >= 0 && nj >= 0 && ni < W && nj < H && (g[nj * W + ni] === 0 || g[nj * W + ni] === 2)) { n = [dx, dy]; break; }
+    }
+    if (!n) continue;
+    const fx = room.x + (i + 0.5 + n[0] * 0.5) * C, fy = room.y + (j + 0.5 + n[1] * 0.5) * C;
+    const sm = [];
+    for (let d = 5; d <= 17; d += 2) { const q = px(fx - n[0] * d, fy - n[1] * d); if (q) sm.push(q); }
+    if (!sm.length) continue;
+    const mid = sm[Math.min(sm.length - 1, 2)];
+    let type = 0, col = mid;
+    const gl = sm.filter(glass), dark = sm.filter((q) => lum(q) < 100), sat = sm.filter((q) => Math.max(...q) - Math.min(...q) > 70 && !glass(q));
+    if (gl.length >= 2) { type = 1; col = gl[0]; }
+    else if (dark.length >= 3) { type = 2; col = dark[Math.floor(dark.length / 2)]; }
+    // barva zdi: nejsvětlejší ze vzorků mimo okno / tabuli
+    const wallC = sm.filter((q) => !glass(q) && lum(q) >= 100).sort((a, b) => lum(b) - lum(a))[0] || mid;
+    const diff = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+    if (!type && sat.length >= 3 && diff(sat[0], wallC) > 90) { type = 3; col = sat[0]; }   // plakát: jiná barva než zeď
+    wcol[c * 3] = wallC[0]; wcol[c * 3 + 1] = wallC[1]; wcol[c * 3 + 2] = wallC[2];
+    wft[c] = type; wfc[c * 3] = col[0]; wfc[c * 3 + 1] = col[1]; wfc[c * 3 + 2] = col[2];
+  }
+  // místnost s tmavými zdmi: to nejsou tabule, ale barva zdi
+  let faces = 0, dark = 0, post = 0;
+  for (let c = 0; c < W * H; c++) if (wcol[c * 3] || wcol[c * 3 + 1] || wcol[c * 3 + 2]) { faces++; if (wft[c] === 2) dark++; if (wft[c] === 3) post++; }
+  if (faces && post / faces > 0.25) for (let c = 0; c < W * H; c++) if (wft[c] === 3) wft[c] = 0;   // barevné zdi, ne plakáty
+  if (faces && dark / faces > 0.3) for (let c = 0; c < W * H; c++) if (wft[c] === 2) { wft[c] = 0; wcol[c * 3] = wfc[c * 3]; wcol[c * 3 + 1] = wfc[c * 3 + 1]; wcol[c * 3 + 2] = wfc[c * 3 + 2]; }
+  Object.assign(M, { wcol, wft, wfc });
+}
 // --- Mapa místnosti: mřížka (0 volno, 1 zeď, 2 nábytek, 3 mimo hru, 4 dveře), dveře, úkryty ---
 function hororMap(roomId) {
   if (HOROR_MAPS[roomId]) return HOROR_MAPS[roomId];
@@ -315,6 +478,7 @@ function hororMap(roomId) {
     }
     fl[j * W + i] = code;
   }
+  hororMapArt(M, hororArtScan(room));   // barvy, okna, tabule, schody z kresby hry
   // nábytek ve 3D (hororModel) a šuplíky – čelem k volné podlaze, s úchytkou
   const boxes = [], zb = (x, y, smooth) => hororHeightAt(M, x, y, !smooth), freeAt = (x, y) => hororCell(M, x, y) === 0;
   room.obstacles.forEach((o) => {
@@ -1069,6 +1233,7 @@ function hororFloorTex(code, wx, wy, out) {
   } else { r = 60; g = 60; b = 60; }
   out[0] = r; out[1] = g; out[2] = b;
 }
+const HOROR_TEX_LUM = { 1: 504, 2: 324, 3: 648, 4: 490, 5: 292 };   // průměrný jas textur (k barvě z kresby)
 function hororCeilTex(code, wx, wy, out) {
   if (code === 1 || code === 4) {   // chodby: klenby – žebra po 190 px
     const rib = hororMod(wx, 190) < 9 || hororMod(wy, 190) < 9 ? 0.8 : 1;
@@ -1100,7 +1265,16 @@ function hororDrawFloor(H, M, cols, rays, horizon, proj, left, width, Ht, E) {
       const along = base / ray.cos, wx = p.x + ray.dx * along, wy = p.y + ray.dy * along;
       const ci = Math.floor((wx - rx) / C), cj = Math.floor((wy - ry) / C);
       const code = ci >= 0 && cj >= 0 && ci < M.W && cj < M.H ? M.fl[cj * M.W + ci] : 0;
-      if (floor) hororFloorTex(code, wx, wy, col); else hororCeilTex(code, wx, wy, col);
+      if (floor) {
+        hororFloorTex(code, wx, wy, col);
+        if (M.fc) {   // barva podlahy jako ve hře, kresba (spáry, kamínky) z textury
+          const fi2 = Math.floor((wy - ry) / 4) * M.fcw + Math.floor((wx - rx) / 4);
+          if (fi2 >= 0 && fi2 < M.fcw * M.fch) {
+            const k = Math.max(0.55, Math.min(1.3, (col[0] + col[1] + col[2]) / (HOROR_TEX_LUM[code] || 500))), o3 = fi2 * 3;
+            col[0] = M.fc[o3] * k; col[1] = M.fc[o3 + 1] * k; col[2] = M.fc[o3 + 2] * k;
+          }
+        }
+      } else hororCeilTex(code, wx, wy, col);
       const l = hororLightAt(H, base, ray.cam) * (floor ? 1 : 0.55);
       data[o] = col[0] * l; data[o + 1] = col[1] * l; data[o + 2] = col[2] * l; data[o + 3] = 255;
     }
@@ -1207,7 +1381,8 @@ function hororColumn(H, M, ray, x, cw, horizon, proj, E, Ht, ci) {
   let ns = 0;
   let ytop = 0, ybot = Ht, cell = my * W + mx;
   const inMap = mx >= 0 && my >= 0 && mx < W && my < M.H;
-  let prevBase = inMap ? M.fh[cell] : 0, prevC = inMap ? M.ch[cell] : HOROR.WALL_H, d0 = 0.6, zb = 1600;
+  let prevBase = inMap ? M.fh[cell] : 0, prevC = inMap ? M.ch[cell] : HOROR.WALL_H, prevCell = inMap ? cell : -1, d0 = 0.6, zb = 1600;
+  const stoneC = (c) => (M.cellCol && c >= 0 ? M.cellCol(c) : [196, 194, 188]);
   const light = (d) => hororLightAt(H, d, ray.cam);
   const fill = (c, k, a, b) => {   // svislý pruh barvy c (× k) mezi y a, b – jen v otevřeném místě
     const y0 = Math.max(ytop, Math.min(a, b)), y1 = Math.min(ybot, Math.max(a, b));
@@ -1257,7 +1432,7 @@ function hororColumn(H, M, ray, x, cw, horizon, proj, E, Ht, ci) {
     if (sx < sy) { t = sx; sx += ddx; mx += stepX; side = 0; } else { t = sy; sy += ddy; my += stepY; side = 1; }
     const d1 = Math.max(0.6, t * C * cos);
     // podlaha a strop buňky, kterou paprsek právě opustil (od d0 do d1): schody / díra, vysoký strop schodiště
-    if (prevBase !== 0 && prevBase < E) fill([196, 194, 188], light((d0 + d1) / 2) * (prevBase < 0 ? 0.7 : 1), Y(d1, prevBase), Y(d0, prevBase));
+    if (prevBase !== 0 && prevBase < E) fill(stoneC(prevCell), light((d0 + d1) / 2) * (prevBase < 0 ? 0.7 : 1), Y(d1, prevBase), Y(d0, prevBase));
     ybot = Math.min(ybot, Y(d0, prevBase), Y(d1, prevBase));
     if (prevC > E && prevC !== HOROR.WALL_H) fill([18, 18, 20], light(d1), Y(d0, prevC), Y(d1, prevC));
     ytop = Math.max(ytop, Y(d0, prevC), Y(d1, prevC));
@@ -1274,14 +1449,14 @@ function hororColumn(H, M, ray, x, cw, horizon, proj, E, Ht, ci) {
       zb = d1; break;
     }
     const base = M.fh[cell], c = M.ch[cell], l = light(d1) * (side ? 0.72 : 1);
-    if (base > prevBase) { fill([150, 148, 142], l * 0.8, Y(d1, base), Y(d1, prevBase)); fill([90, 88, 84], l, Y(d1, base), Y(d1, base) + Math.max(1, 1.5 / d1 * proj)); }   // podstupnice a hrana schodu
+    if (base > prevBase) { fill(stoneC(cell), l * 0.72, Y(d1, base), Y(d1, prevBase)); fill([90, 88, 84], l, Y(d1, base), Y(d1, base) + Math.max(1, 1.5 / d1 * proj)); }   // podstupnice a hrana schodu
     ybot = Math.min(ybot, Y(d1, Math.max(base, prevBase)));
     if (c < prevC) { fill(hororStyle(M.id, null).top, l, Y(d1, prevC), Y(d1, c)); ytop = Math.max(ytop, Y(d1, c)); }   // překlad nad vchodem na schodiště
     if (ns < 96) { SM[sOff + ns * 3] = d1; SM[sOff + ns * 3 + 1] = ytop; SM[sOff + ns * 3 + 2] = ybot; ns++; }
     if (ytop >= ybot) { zb = d1; break; }
     doBoxes(cell);
     if (ytop >= ybot) { zb = d1; break; }
-    prevBase = base; prevC = c;
+    prevBase = base; prevC = c; prevCell = cell;
   }
   HOROR_COL.n[ci] = ns;
   // průhledné věci (desky stolů, nohy, židle, monitory, zábradlí, vytažené šuplíky) od nejvzdálenější
@@ -1322,21 +1497,42 @@ function hororWallFace(H, M, hit, perp, cam, x, cw, Y, base, ceil, fill, l) {
     }
     return;
   }
-  // zeď podle dílu: nahoře světlá (ve vstupu okrová s krémovými plochami), dole sokl, pruh / lišta
-  const low = hy(ws.lowH);
-  fill(ws.top, l * seam, top, low);
+  // zeď podle dílu: barva z kresby hry (jinak podle stylu), dole sokl, pruh / lišta
+  const low = hy(ws.lowH), ci = hit.cell, wc = M.wcol && ci >= 0 && (M.wcol[ci * 3] || M.wcol[ci * 3 + 1]) ? [M.wcol[ci * 3], M.wcol[ci * 3 + 1], M.wcol[ci * 3 + 2]] : ws.top;
+  fill(wc, l * seam, top, low);
+  const ft = M.wft && ci >= 0 ? M.wft[ci] : 0;
+  if (ft) {
+    const fc = [M.wfc[ci * 3], M.wfc[ci * 3 + 1], M.wfc[ci * 3 + 2]], cellNo = Math.floor(hit.u);
+    if (ft === 1) {   // okno: rám, sklo (venku noc, trochu měsíc), příčky
+      const moon = Math.max(l, 0.32), frame = u < 0.09 && cellNo % 3 === 0;
+      fill([226, 224, 216], l, hy(116), hy(44));
+      if (!frame) {
+        fill([fc[0] * 0.28, fc[1] * 0.34, fc[2] * 0.48], moon, hy(112), hy(48));
+        fill([226, 224, 216], l, hy(84), hy(81));   // příčka
+      }
+      fill([236, 234, 228], l * 1.1, hy(44), hy(41));   // parapet
+    } else if (ft === 2) {   // tabule: dřevěný rám a plocha
+      fill([138, 90, 46], l, hy(104), hy(40));
+      fill(fc, Math.max(l, 0.05) * 1.1, hy(101), hy(43));
+      fill([200, 196, 180], l, hy(44), hy(41));   // lišta na křídy
+    } else if (ft === 3 && (u > 0.15 && u < 0.85)) fill(fc, l, hy(98), hy(70));   // plakát
+  }
   if (ws.panel && u > 0.12 && u < 0.88 && (Math.floor(hit.u) % 7) > 0) fill(ws.panel, l, hy(122), hy(60));
   fill(ws.low, l * seam, low, bot);
   if (ws.panel) fill(ws.band, l, hy(ws.lowH + ws.bandH), low); else fill(ws.band, l, hy(ws.bandH), bot);
 }
 // Výška podlahy pod bodem (na schodech; přesně = plynule pro kameru, jinak po stupních)
 function hororHeightAt(M, x, y, steps) {
-  if (!M.stairs) return 0;
-  for (const s of M.stairs) {
+  for (const s of M.stairs || []) {
     const lx = x - s.x, ly = y - s.y;
     if (lx >= 0 && ly >= 0 && lx < 320 && ly < 340) return hororStairH(s.floor, lx, ly, steps);
   }
-  return 0;
+  if (!M.fi) return 0;
+  const i = Math.floor((x - M.room.x) / M.C), j = Math.floor((y - M.room.y) / M.C);
+  if (i < 0 || j < 0 || i >= M.W || j >= M.H) return 0;
+  const c = j * M.W + i, k = M.fi[c];
+  if (k >= 0 && M.flightsAll && !Number.isNaN(M.flightsAll[k].base)) return hororFlightH(M.flightsAll[k], x, y, steps);
+  return M.fh[c];
 }
 // Schodiště A (02_mistnosti.js, SCHODY_A): 1. rameno nahoru (x 200–300), podesta, 2. rameno doleva,
 // podesta, 3. rameno (x 20–120) až do patra. V patrech je vidět dolů na ramena pod sebou (díry).
