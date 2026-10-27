@@ -60,16 +60,27 @@ function hororOthers() {
     const [a, b, f] = String(o.a || '').split(','), fl = parseInt(f, 10) || 0;
     o.ang = parseFloat(a) || 0;
     o.hb = b !== undefined && b !== '' ? Math.max(0, parseInt(b, 10) || 0) : undefined;
-    o.hh = !!(fl & 1); o.hr = !!(fl & 2); o.gh = !!(fl & 4);
+    o.hh = !!(fl & 1); o.hr = !!(fl & 2); o.gh = !!(fl & 4); o.ch = !!(fl & 8);
     return o;
   });
+}
+// Ležící kamarád u mě (⛑ lékárnička ho oživí)
+function hororDownNear(H) {
+  if (!H.net || !H.down) return null;
+  let best = null, bd = 70;
+  for (const o of hororOthers()) {
+    if (!(o.id in H.down) || o.r !== H.p.room) continue;
+    const d = Math.hypot(o.x - H.p.x, o.y - H.p.y);
+    if (d < bd) { bd = d; best = o; }
+  }
+  return best;
 }
 // Kamarád u mě (půjčit baterku)
 function hororMateNear(H) {
   if (!H.net || H.ghost) return null;
   let best = null, bd = 80;
   for (const o of hororOthers()) {
-    if (o.r !== H.p.room || o.gh || (H.out || []).includes(o.id)) continue;
+    if (o.r !== H.p.room || o.gh || (H.out || []).includes(o.id) || (H.down && o.id in H.down)) continue;
     const d = Math.hypot(o.x - H.p.x, o.y - H.p.y);
     if (d < bd) { bd = d; best = o; }
   }
@@ -80,7 +91,7 @@ function hororMyRecord() {
   const H = state.horor, p = H.p;
   const rec = { n: mp.name, r: p.room, x: Math.round(p.x), y: Math.round(p.y), g: H.net.game, gj: H.net.joined };
   if (H.phase !== 'lobby') rec.gp = 1;
-  const fl = (H.hidden ? 1 : 0) | (H.running ? 2 : 0) | (H.ghost ? 4 : 0);
+  const fl = (H.hidden ? 1 : 0) | (H.running ? 2 : 0) | (H.ghost ? 4 : 0) | (H.items && H.items.sance > 0 ? 8 : 0);   // 8 = má 🛡 druhou šanci
   rec.a = `${hororAngle(p.a).toFixed(2)},${Math.min(99, Math.round(H.bat))},${fl}`;   // max 12 znaků (pravidla)
   if (mySkin !== SKINS[0]) rec.s = mySkin.id;   // skin z Lockeru (33_skiny.js)
   return rec;
@@ -132,7 +143,7 @@ function hororApplyS(H, S) {
   if (!Array.isArray(S.p) || !S.p.includes(mp.id)) return;   // připojil jsem se až během kola – čekám v čekárně
   if (S.k !== H.net.round) {   // nové kolo: všichni na start
     H.net.round = S.k;
-    Object.assign(H, { keys: S.keys.map((k) => ({ ...k })), seed: S.seed, open: new Set(S.open || []), taken: new Set(S.taken || []), sp: { ...(S.sp || {}) }, out: (S.out || []).slice(), hs: {}, hidPrev: {}, st: 'play', lada: hororLadaFrom(S.lada), ladaT: null });
+    Object.assign(H, { kk: S.kk ? { ...S.kk } : null, gun: S.gun ? { ...S.gun } : null, down: { ...(S.dn || {}) }, sv: { ...(S.sv || {}) }, svSeen: (S.sv || {})[mp.id] || 0, keys: S.keys.map((k) => ({ ...k })), seed: S.seed, open: new Set(S.open || []), taken: new Set(S.taken || []), sp: { ...(S.sp || {}) }, out: (S.out || []).slice(), hs: {}, hidPrev: {}, st: 'play', lada: hororLadaFrom(S.lada), ladaT: null });
     H.got = H.keys.filter((k) => k.got).length;
     hororResetPlayer(H, S.p.indexOf(mp.id));
     H.scared = !!S.sc; H.scN = S.sc ? S.sc.n : 0;
@@ -150,12 +161,21 @@ function hororApplyS(H, S) {
       if (k) { hororTone(988, 0.15, 'triangle', 0.2); hororSay(`🔑 ${amongName(k.by)} našel klíč (${H.got}/${HOROR.KEYS})`, 3); }
     }
     H.open = new Set(S.open || []); H.taken = new Set(S.taken || []); H.sp = { ...(S.sp || {}) }; H.out = (S.out || []).slice();
+    if (S.kk && H.kk && S.kk.got && !H.kk.got && S.kk.by !== mp.id) hororSay(`🗝 ${amongName(S.kk.by)} našel klíč od Křiváčka – kabinet je odemčený!`, 3.5);
+    if (S.gun && H.gun && S.gun.by && !H.gun.by && S.gun.by !== mp.id) hororSay(`🔫 ${amongName(S.gun.by)} má zbraň!`, 3);
+    if (S.lada && S.lada.mode === 'stun' && H.lada && H.lada.mode !== 'stun') hororSay('💤 Láďa dostal zásah a spí!', 3);
+    H.kk = S.kk ? { ...S.kk } : null; H.gun = S.gun ? { ...S.gun } : null; H.down = { ...(S.dn || {}) };
     H.ladaT = S.lada;
     if (!H.lada || H.lada.room !== S.lada.room) H.lada = hororLadaFrom(S.lada);
     Object.assign(H.lada, { mode: S.lada.mode, tg: S.lada.tg || '' });
     H.st = S.st;
   }
-  if ((S.out || []).includes(mp.id) && !H.ghost && H.phase === 'play') hororCaught(H);
+  const meDown = !!(S.dn && mp.id in S.dn);
+  if (meDown) H.downT = S.dn[mp.id];
+  if (meDown && !H.downed) { H.downed = true; if (H.phase === 'play') hororCaught(H); }
+  else if (!meDown && H.downed && !(S.out || []).includes(mp.id)) { H.downed = false; hororSay('⛑ Kamarád tě oživil! Vstávej!', 3); hororTone(784, 0.2, 'triangle', 0.25); }
+  if ((S.out || []).includes(mp.id) && !H.ghost) { H.ghost = true; H.downed = false; if (H.phase === 'play' && !meDown) hororSay('👻 Nikdo tě neoživil – jsi duch. Láďa tě nevidí, pomáhej ostatním.', 5); }
+  if (S.sv && (S.sv[mp.id] || 0) > (H.svSeen || 0)) { H.svSeen = S.sv[mp.id]; if (!hororIsHost()) { hororUseItem(H, 'sance'); hororSecondChance(H); } }
   if (S.sc && S.sc.n !== H.scN) { H.scN = S.sc.n; H.scared = true; if (S.sc.id === mp.id && !hororIsHost()) hororScareFx(H); }   // hostitel už to má (hororScare)
   if ((S.st === 'win' || S.st === 'lose') && H.phase !== 'end') {
     H.phase = 'end'; H.endT = 0; H.st = S.st; H.winBy = S.by || '';
@@ -179,7 +199,8 @@ function hororWriteS(H, extra) {
     st: H.st || 'play', k: H.net.round, p: S0.p || [], seed: H.seed, by: H.winBy || '',
     keys: H.keys.map((k) => ({ room: k.room, x: Math.round(k.x), y: Math.round(k.y), got: !!k.got, by: k.by || '' })),
     lada: { room: H.lada.room, x: Math.round(H.lada.x), y: Math.round(H.lada.y), a: +H.lada.a.toFixed(2), mode: H.lada.mode, tg: H.lada.tg || '' },
-    open: [...H.open], taken: [...H.taken], sp: H.sp, out: H.out, sc: H.sc || null, ...extra,
+    open: [...H.open], taken: [...H.taken], sp: H.sp, out: H.out, sc: H.sc || null,
+    dn: Object.fromEntries(Object.entries(H.down || {}).map(([id, t]) => [id, Math.max(0, Math.round(t))])), sv: H.sv || {}, kk: H.kk || null, gun: H.gun || null, ...extra,
   };
   S.v = (S0.v || 0) + 1;
   fetch(amongUrl(`${H.net.game}/s`), { method: 'PUT', body: JSON.stringify({ d: JSON.stringify(S), t: { '.sv': 'timestamp' } }) }).catch(() => {});
@@ -192,11 +213,11 @@ function hororNetStart(H) {
   const r = hororMakeRound(), ids = g.players.filter((p) => !p.gp || p.me).slice(0, HOROR_NET.MAX).map((p) => p.id);
   H.net.round = 0;   // hororApplyS pozná nové kolo
   const k = ((H.net.S && H.net.S.k) || 0) + 1;
-  Object.assign(H, { keys: r.keys, seed: r.seed, lada: r.lada, open: new Set(), taken: new Set(), sp: {}, out: [], sc: null, st: 'play', winBy: '' });
+  Object.assign(H, { keys: r.keys, kk: r.kk, gun: r.gun, seed: r.seed, lada: r.lada, open: new Set(), taken: new Set(), sp: {}, out: [], down: {}, sv: {}, sc: null, st: 'play', winBy: '' });
   H.net.S = { k: H.net.S ? H.net.S.k : 0, v: H.net.S ? H.net.S.v : 0, p: ids };
   const S = {
     st: 'play', k, p: ids, seed: r.seed, by: '', keys: r.keys, lada: { room: r.lada.room, x: Math.round(r.lada.x), y: Math.round(r.lada.y), a: 0, mode: 'patrol', tg: '' },
-    open: [], taken: [], sp: {}, out: [], sc: null, v: (H.net.S.v || 0) + 1,
+    open: [], taken: [], sp: {}, out: [], dn: {}, sv: {}, kk: r.kk, gun: r.gun, sc: null, v: (H.net.S.v || 0) + 1,
   };
   fetch(amongUrl(`${H.net.game}/s`), { method: 'PUT', body: JSON.stringify({ d: JSON.stringify(S), t: { '.sv': 'timestamp' } }) }).catch(() => {});
   hororApplyS(H, S);
@@ -232,8 +253,12 @@ function hororHostTick(H, dt) {
   if (H.st === 'play') {
     // kdo z kola odešel, je jako chycený; všichni chycení = prohra
     const here = new Set((hororMyGame() || { players: [] }).players.map((p) => p.id));
-    for (const id of net.S.p || []) if (!here.has(id) && !H.out.includes(id)) { H.out.push(id); net.dirty = true; }
-    if ((net.S.p || []).length && (net.S.p || []).every((id) => H.out.includes(id))) { H.st = 'lose'; net.dirty = true; }
+    for (const id of net.S.p || []) if (!here.has(id) && !H.out.includes(id)) { H.out.push(id); delete H.down[id]; net.dirty = true; }
+    for (const id of Object.keys(H.down)) {   // ležící: do minuty ho musí někdo oživit, jinak je duch
+      H.down[id] -= dt;
+      if (H.down[id] <= 0) { delete H.down[id]; if (!H.out.includes(id)) H.out.push(id); if (id === mp.id) H.ghost = true; net.dirty = true; }
+    }
+    if ((net.S.p || []).length && (net.S.p || []).every((id) => H.out.includes(id) || id in H.down)) { H.st = 'lose'; net.dirty = true; }
     if (H.phase === 'pause' || H.phase === 'caught') hororLada(H, dt);   // Láďa jde dál, i když mám pauzu
   }
   net.sendT -= dt;
@@ -371,9 +396,9 @@ function drawHororMates(H) {
   const list = hororOthers();
   ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   list.forEach((o, i) => {
-    const caught = (H.out || []).includes(o.id) || o.gh;
-    ctx.fillStyle = caught ? '#9e9e9e' : '#e0e0e0';
-    ctx.fillText(`${caught ? '👻 ' : ''}${o.n}${o.hb !== undefined && !caught ? ` 🔦${o.hb}%` : ''}${H.sp[o.id] ? ` 🔋×${H.sp[o.id]}` : ''}`, CONFIG.WIDTH - 60, 20 + i * 16);
+    const caught = (H.out || []).includes(o.id) || o.gh, down = H.down && o.id in H.down;
+    ctx.fillStyle = down ? '#ff8a80' : caught ? '#9e9e9e' : '#e0e0e0';
+    ctx.fillText(`${down ? `🆘 ${Math.ceil(H.down[o.id])}s ` : caught ? '👻 ' : ''}${o.n}${o.hb !== undefined && !caught ? ` 🔦${o.hb}%` : ''}${H.sp[o.id] ? ` 🔋×${H.sp[o.id]}` : ''}`, CONFIG.WIDTH - 60, 20 + i * 16);
   });
 }
 // Kreslí se nakonec HUDu (39_horor.js volá drawHororNet, když existuje)

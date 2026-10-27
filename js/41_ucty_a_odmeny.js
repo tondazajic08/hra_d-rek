@@ -49,6 +49,34 @@ const HOROR_UPS = [
   { id: 'tichost', icon: '🤫', name: 'Tichý krok', text: 'Láďa tě slyší o 25 % hůř', cost: [200, 400] },
   { id: 'nahradni', icon: '🎒', name: 'Náhradní baterka', text: 'na startu máš 1 navíc', cost: [300] },
 ];
+// Věci na jedno použití (kupují se v ⭐ Vylepšení, berou se do další hry): kolik kusů je uloženo v HOROR_ITEM_KEY
+const HOROR_ITEM_KEY = 'hra_darek_horor_veci_v1';
+const HOROR_ITEMS = [
+  { id: 'sance', icon: '🛡', name: 'Druhá šance', text: 'když tě Láďa chytí, vytrhneš se', price: 100 },
+  { id: 'tycinka', icon: '🍫', name: 'Tyčinka', text: 'klávesa 1: 10 s sprint bez únavy', price: 100 },
+  { id: 'ocka', icon: '👁', name: 'Očka', text: 'klávesa 2: 5 s vidíš Láďovýma očima', price: 50 },
+  { id: 'lekarnicka', icon: '⛑', name: 'Lékárnička', text: 'klávesa 3: oživí kamaráda (online)', price: 110 },
+];
+const HOROR_ITEM_MAX = 9;
+function hororItemsGet() {
+  try { const d = JSON.parse(storageGet(HOROR_ITEM_KEY) || '{}'); return d && typeof d === 'object' ? { ...d } : {}; } catch (e) { return {}; }
+}
+function hororItemAdd(id, n) {
+  const d = hororItemsGet();
+  d[id] = Math.max(0, Math.min(HOROR_ITEM_MAX, (d[id] | 0) + n));
+  storageSet(HOROR_ITEM_KEY, JSON.stringify(d));
+  acctDirty();
+}
+function hororBuyItem(id) {
+  const it = HOROR_ITEMS.find((q) => q.id === id), have = hororItemsGet()[id] | 0, money = mainMoneyGet();
+  if (!it) return '';
+  if (have >= HOROR_ITEM_MAX) return `Víc než ${HOROR_ITEM_MAX} kusů unést nejde.`;
+  if (money < it.price) return `Chybí ti ${it.price - money} Kč (máš ${money} Kč).`;
+  mainMoneyAdd(-it.price);
+  hororItemAdd(id, 1);
+  playSound([[523, 0, 0.06], [659, 0.07, 0.1]]);
+  return `${it.icon} ${it.name} – máš ${have + 1} ks.`;
+}
 function hororUps() {
   try { const d = JSON.parse(storageGet(HOROR_UP_KEY) || '{}'); return d && typeof d === 'object' ? d : {}; } catch (e) { return {}; }
 }
@@ -69,10 +97,12 @@ function hororBuyUp(id) {
   playSound([[523, 0, 0.06], [784, 0.07, 0.1]]);
   return `${u.icon} ${u.name} – úroveň ${lv + 1}!`;
 }
-const HOROR_SHOP_ROW = (i) => ({ x: 130, y: 128 + i * 56, w: 540, h: 50 });
-const HOROR_SHOP_BACK = { x: 300, y: 474, w: 200, h: 44 };
+// obchod: vlevo vylepšení (trvalá), vpravo věci (na jedno použití)
+const HOROR_SHOP_N = () => HOROR_UPS.length + HOROR_ITEMS.length;
+const HOROR_SHOP_ROW = (i) => (i < HOROR_UPS.length ? { x: 34, y: 140 + i * 56, w: 362, h: 50 } : { x: 404, y: 140 + (i - HOROR_UPS.length) * 56, w: 362, h: 50 });
+const HOROR_SHOP_BACK = { x: 300, y: 488, w: 200, h: 44 };
 function hororShopInput(H, keys, events) {
-  const n = HOROR_UPS.length + 1;
+  const n = HOROR_SHOP_N() + 1;
   H.shopSel = H.shopSel || 0;
   for (const k of keys) {
     if (k === 'Escape') { H.phase = 'intro'; return; }
@@ -83,13 +113,13 @@ function hororShopInput(H, keys, events) {
     let i = -1;
     if (e.type === 'action') i = H.shopSel;
     else if (e.x != null) {
-      if (pointInRect(e.x, e.y, HOROR_SHOP_BACK, 4)) i = HOROR_UPS.length;
-      else i = HOROR_UPS.findIndex((_, k) => pointInRect(e.x, e.y, HOROR_SHOP_ROW(k), 2));
+      if (pointInRect(e.x, e.y, HOROR_SHOP_BACK, 4)) i = HOROR_SHOP_N();
+      else { i = -1; for (let k = 0; k < HOROR_SHOP_N(); k++) if (pointInRect(e.x, e.y, HOROR_SHOP_ROW(k), 2)) i = k; }
     }
     if (i < 0) continue;
-    if (i === HOROR_UPS.length) { H.phase = 'intro'; return; }
+    if (i === HOROR_SHOP_N()) { H.phase = 'intro'; return; }
     H.shopSel = i;
-    H.shopMsg = hororBuyUp(HOROR_UPS[i].id); H.shopMsgT = 3;
+    H.shopMsg = i < HOROR_UPS.length ? hororBuyUp(HOROR_UPS[i].id) : hororBuyItem(HOROR_ITEMS[i - HOROR_UPS.length].id); H.shopMsgT = 3;
   }
 }
 function drawHororShop(H) {
@@ -97,25 +127,41 @@ function drawHororShop(H) {
   ctx.fillStyle = 'rgba(0, 0, 0, 0.88)'; ctx.fillRect(-VIEW.offX, 0, W + 2 * VIEW.offX, CONFIG.HEIGHT);
   drawOutlinedText('⭐ Vylepšení postavy', W / 2, 52, 'bold 32px sans-serif', '#ffd54a', 'middle');
   drawOutlinedText(`💰 ${mainMoneyGet()} Kč  ·  vyděláš ve hře, za výhru v hororu (250), ve Vrahovi (50) a v Among Us (25)`, W / 2, 92, 'bold 13px sans-serif', '#cfcfcf', 'middle', W - 40);
+  drawOutlinedText('Vylepšení (napořád)', 215, 122, 'bold 14px sans-serif', '#ffd54a', 'middle');
+  drawOutlinedText('Věci do hry (na 1 použití)', 585, 122, 'bold 14px sans-serif', '#80deea', 'middle');
+  const have = hororItemsGet();
+  HOROR_ITEMS.forEach((it, k) => {
+    const i = HOROR_UPS.length + k, r = HOROR_SHOP_ROW(i), sel = i === H.shopSel, n = have[it.id] | 0;
+    roundRectPath(r.x, r.y, r.w, r.h, 10);
+    ctx.fillStyle = sel ? 'rgba(128, 222, 234, 0.2)' : 'rgba(255, 255, 255, 0.07)'; ctx.fill();
+    if (sel) { ctx.strokeStyle = '#80deea'; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.font = '22px sans-serif'; ctx.fillStyle = '#ffffff'; ctx.fillText(it.icon, r.x + 10, r.y + r.h / 2 + 1);
+    ctx.font = 'bold 15px sans-serif'; ctx.fillText(`${it.name}${n ? `  ×${n}` : ''}`, r.x + 44, r.y + 17);
+    ctx.font = '11px sans-serif'; ctx.fillStyle = '#cfcfcf'; ctx.fillText(it.text, r.x + 44, r.y + 36, r.w - 120);
+    ctx.textAlign = 'right'; ctx.font = 'bold 15px sans-serif';
+    ctx.fillStyle = mainMoneyGet() >= it.price ? '#ffd54a' : '#ff8a80';
+    ctx.fillText(`${it.price} Kč`, r.x + r.w - 12, r.y + r.h / 2 + 1);
+  });
   HOROR_UPS.forEach((u, i) => {
     const r = HOROR_SHOP_ROW(i), lv = hororUp(u.id), max = lv >= u.cost.length, sel = i === H.shopSel;
     roundRectPath(r.x, r.y, r.w, r.h, 10);
     ctx.fillStyle = sel ? 'rgba(255, 213, 74, 0.22)' : 'rgba(255, 255, 255, 0.07)'; ctx.fill();
     if (sel) { ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 2; ctx.stroke(); }
     ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.font = '24px sans-serif'; ctx.fillStyle = '#ffffff'; ctx.fillText(u.icon, r.x + 12, r.y + r.h / 2 + 1);
-    ctx.font = 'bold 16px sans-serif'; ctx.fillText(u.name, r.x + 50, r.y + 17);
-    ctx.font = '12px sans-serif'; ctx.fillStyle = '#cfcfcf'; ctx.fillText(u.text, r.x + 50, r.y + 36);
+    ctx.font = '22px sans-serif'; ctx.fillStyle = '#ffffff'; ctx.fillText(u.icon, r.x + 10, r.y + r.h / 2 + 1);
+    ctx.font = 'bold 15px sans-serif'; ctx.fillText(u.name, r.x + 44, r.y + 17);
+    ctx.font = '11px sans-serif'; ctx.fillStyle = '#cfcfcf'; ctx.fillText(u.text, r.x + 44, r.y + 36, 170);
     for (let k = 0; k < u.cost.length; k++) {   // úrovně
       ctx.fillStyle = k < lv ? '#ffd54a' : 'rgba(255, 255, 255, 0.2)';
-      ctx.beginPath(); ctx.arc(r.x + 310 + k * 16, r.y + r.h / 2, 5.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(r.x + 226 + k * 12, r.y + 17, 4.5, 0, Math.PI * 2); ctx.fill();
     }
     ctx.textAlign = 'right'; ctx.font = 'bold 15px sans-serif';
     ctx.fillStyle = max ? '#7ee08a' : mainMoneyGet() >= u.cost[lv] ? '#ffd54a' : '#ff8a80';
     ctx.fillText(max ? 'MAX' : `${u.cost[lv]} Kč`, r.x + r.w - 14, r.y + r.h / 2 + 1);
   });
-  drawChessButton(HOROR_SHOP_BACK, 'Zpět', H.shopSel === HOROR_UPS.length, '#5a4636');
-  if (H.shopMsgT > 0) drawOutlinedText(H.shopMsg, W / 2, 545, 'bold 17px sans-serif', /Chybí|Už/.test(H.shopMsg) ? '#ff8a80' : '#7ee08a', 'middle');
+  drawChessButton(HOROR_SHOP_BACK, 'Zpět', H.shopSel === HOROR_SHOP_N(), '#5a4636');
+  if (H.shopMsgT > 0) drawOutlinedText(H.shopMsg, W / 2, 560, 'bold 17px sans-serif', /Chybí|Už|Víc/.test(H.shopMsg) ? '#ff8a80' : '#7ee08a', 'middle');
 }
 
 // =====================================================================

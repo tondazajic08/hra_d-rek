@@ -617,6 +617,11 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 
 ## Bacha na Láďu (`js/39_horor.js`)
 
+- **Jak Láďa vidí a slyší** (`hororSeesT`, `hororLada`): vidí ve stejné místnosti do 520 px, když se dívá tvým směrem (±1,3 rad ≈ 75° na každou stranu) nebo jsi blíž než 170 px nebo tě už honí, a mezi vámi není zeď / vysoký nábytek; schovaného nevidí. Slyší jen sprint do 300 px (× Tichý krok). Chytí do 30 px. Spící (`mode: 'stun'`) nevidí a nehýbe se.
+- **8 klíčů** (`HOROR.KEYS`), každou hru v 8 náhodných místnostech (kromě startu a Křiváčkova kabinetu), naháněčka po 4. klíči (`SCARE_AT`). **Klíč od Křiváčka 🗝** (náhodně) odemkne Kabinet Křiváček (`GUN_ROOM`, `hororLockedDoor`), tam je **zbraň 🔫** s 1–4 náboji: Q / klik se zamčenou myší, zásah (Láďa na mušce, nic mezi) ho uspí na 40 s (`hororShoot`, akce `kk`, `gun`, `shoot`).
+- **Věci z obchodu** (`HOROR_ITEMS`, `hra_darek_horor_veci_v1`, max 9 ks, gastují se při použití): 🛡 druhá šance (100 Kč, při chycení se vytrhneš, Láďa 3 s omráčený; online přes pole `a` – bit 8 – a `S.sv`), 🍫 tyčinka (100, klávesa 1: plná stamina a 10 s sprint bez únavy), 👁 očka (50, klávesa 2: 5 s pohled Láďovýma očima – `renderHoror` přepne kameru na Láďu, vidíš i sebe), ⛑ lékárnička (110, klávesa 3: oživí ležícího kamaráda). Na mobilu tlačítka nahoře (`HOROR_ITEM_BTNS`).
+- **Online: chycený leží** (`H.down`, `S.dn`) 60 s (`DOWN_TIME`) – vidí kolem sebe, oči u země, nehýbe se, Láďa ho nechá být; kamarád s lékárničkou ho oživí (akce `revive`), jinak je duch. Nikdo nestojí = prohra.
+
 Horor **z první osoby** po celé **budově A** (uživatel chtěl horor s jumpscary a naháněčkami). Mód v 🎮 Módy, obrazovka `'horor'` (joystick funguje i tady – `05_stav_a_ovladani.js`, `setScreen`).
 
 - **Mapa = budova A** stejně jako mapa A v Among Us (`AMONG_MAPS.A.rooms`, `HOROR_ROOMS()`): přízemí bez části s fotbálkem (Hlavní chodba, křídla, schodiště, vstupní chodba), chodby 1. a 2. patra a 24 místností, do kterých z nich vedou dveře (třídy, kabinety, sborovna, kancelář, aula, WC) – 27 místností, 58 průchozích dveří. Dveře do místností mimo mapu jsou zamčené (tmavší), východ = dveře `venku` ve vstupní chodbě (se 3 klíči zelené).
