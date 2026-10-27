@@ -167,7 +167,7 @@ function drawHororShop(H) {
 // =====================================================================
 // ÚČTY
 // =====================================================================
-const ACCT = { KEY: 'hra_darek_ucet_v1', SYNC: 'hra_darek_ucet_cas_v1', LOGIN: 'hra_darek_ucet_login_v1', EVERY: 15, SKIP: ['hra_darek_ucet_login_v1', 'hra_darek_online_v1', 'hra_darek_kvalita_v1', 'hra_darek_zvuk_vypnuty'] };   // přezdívka (jmeno_v1) se ukládá i do účtu
+const ACCT = { KEY: 'hra_darek_ucet_v1', SYNC: 'hra_darek_ucet_cas_v1', LOGIN: 'hra_darek_ucet_login_v1', EVERY: 5, SKIP: ['hra_darek_ucet_login_v1', 'hra_darek_online_v1', 'hra_darek_kvalita_v1', 'hra_darek_zvuk_vypnuty'] };   // přezdívka (jmeno_v1) se ukládá i do účtu
 const acct = { user: null, dirty: false, sendT: 5, busy: false, msg: '', msgT: 0, panel: null, checked: false, form: null };
 try { const u = JSON.parse(storageGet(ACCT.KEY) || 'null'); if (u && u.n && u.k && u.h) acct.user = u; } catch (e) { acct.user = null; }
 function acctDirty() { acct.dirty = true; }
@@ -431,7 +431,7 @@ for (const ev of ['keydown', 'keyup', 'pointerdown', 'mousedown', 'touchstart'])
 // --- Okno účtu na úvodu (tlačítko 👤 se jménem) ---
 const ACCT_PANEL = { x: 200, y: 120, w: 400, h: 360 };
 const acctItems = () => (acct.user
-  ? [{ id: 'nick', label: '✏ Změnit přezdívku' }, { id: 'save', label: '☁ Uložit postup teď' }, { id: 'out', label: 'Odhlásit se' }, { id: 'close', label: 'Zavřít' }]
+  ? [{ id: 'nick', label: '✏ Změnit přezdívku' }, { id: 'out', label: 'Odhlásit se' }, { id: 'close', label: 'Zavřít' }]
   : [{ id: 'login', label: '🔑 Přihlásit se' }, { id: 'new', label: '➕ Založit účet' }, { id: 'nick', label: '✏ Hrát bez účtu – jen přezdívka' }, { id: 'close', label: 'Zavřít' }]);
 const acctRow = (i) => ({ x: 240, y: 222 + i * 52, w: 320, h: 44 });
 function acctOpen() { acct.panel = { sel: 0 }; }
@@ -439,7 +439,6 @@ function acctAction(id) {
   if (id === 'login') acctFormOpen('login');
   else if (id === 'new') acctFormOpen('register');
   else if (id === 'nick') acctFormOpen('nick');
-  else if (id === 'save') { acctUpload(); acctNote('☁ Ukládám…'); }
   else if (id === 'out') acctLogout();
   else acct.panel = null;
 }
@@ -473,7 +472,7 @@ function drawAccountPanel() {
   ctx.fillStyle = '#1d2333'; ctx.fill(); ctx.strokeStyle = '#4fc3f7'; ctx.lineWidth = 3; ctx.stroke();
   drawOutlinedText('👤 Účet', 400, A.y + 34, 'bold 26px sans-serif', '#4fc3f7', 'middle');
   drawOutlinedText(acct.user ? `Přihlášen: ${acct.user.nick || acct.user.n} (${acct.user.n})` : 'Bez účtu se postup pamatuje jen na tomhle zařízení', 400, A.y + 66, 'bold 13px sans-serif', '#c9d3e8', 'middle', A.w - 30);
-  if (acct.user) drawOutlinedText('Postup se ukládá na server', 400, A.y + 86, '12px sans-serif', '#9fb3c8', 'middle');
+  if (acct.user) drawOutlinedText('☁ Postup se ukládá automaticky', 400, A.y + 86, '12px sans-serif', '#9fb3c8', 'middle');
   items.forEach((it, i) => drawChessButton(acctRow(i), it.label, i === acct.panel.sel, it.id === 'close' ? '#5a4636' : it.id === 'out' ? '#7a2a2a' : '#2f5a7a'));
 }
 // Tlačítko se jménem na úvodu otevře okno účtu (29_multiplayer.js) a ukáže, kdo je přihlášený
