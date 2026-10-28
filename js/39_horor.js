@@ -1989,8 +1989,8 @@ function drawHororHud(H) {
     // kde jsou klíče (třídy), získané škrtnuté
     ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.font = 'bold 10px sans-serif';
-    H.keys.forEach((k, i) => { ctx.fillStyle = k.got ? '#7ee08a' : '#e0e0e0'; ctx.fillText(`${k.got ? '✔' : '•'} ${hororRoomName(k.room).slice(0, 15)}`, 104 + (i % 2) * 96, 14 + Math.floor(i / 2) * 13, 92); });
-    if (H.kk) { ctx.fillStyle = H.kk.got ? '#7ee08a' : '#ffd54a'; ctx.fillText(H.kk.got ? '🗝 Křiváček odemčen' : '🗝 klíč od Křiváčka: ?', 200, 66, 120); }
+    // kde jsou klíče, se neukazuje – musíš je najít
+    if (H.kk && H.kk.got) { ctx.fillStyle = '#7ee08a'; ctx.fillText('🗝 Křiváček odemčen', 104, 28); }
     // věci a zbraň (tlačítka nahoře – na mobilu se na ně ťuká)
     const it = H.items || {}, g = H.gun && H.gun.by === hororMe() ? H.gun : null;
     [['🍫', it.tycinka, '1'], ['👁', it.ocka, '2'], ['⛑', it.lekarnicka, '3'], ['🔫', g ? g.ammo : 0, 'Q']].forEach(([ic, n, key], i) => {

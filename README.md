@@ -78,6 +78,7 @@ js/38_among_extra.js  Among Us: třídy na mapách, venty, sabotáže (světla, 
 js/39_horor.js        Bacha na Láďu – horor z první osoby po celé škole (raycasting se schody, nábytek jako 3D krabice), Láďa honí, úkryty, klíče, šuplíky a baterky
 js/40_horor_online.js Bacha na Láďu online – seznam her, čekárna (max 4), hostitel řídí Láďu, půjčování baterek
 js/41_ucty_a_odmeny.js Účty (přihlášení, postup na serveru), peníze za výhry v módech, ⭐ vylepšení do hororu
+js/42_horor_zvuky.js  Zvuky hororu: hudba na pozadí, Kabát při honičce (hlasitost podle vzdálenosti), kroky, dech, věci, online
 js/15_hlavni.js       update/render podle obrazovky, herní smyčka, START (musí být poslední)
 obrazky/              hlavy 48 × 48 px: hrac.png, mala.png, krivacek.png, rauscher.png, holub.png, soumar.png, lencova.png, vesela.png, mraz.png …
 zvuky/                hudba: pozadí/ = hudba na pozadí (CONFIG.MUSIC_PLAYLIST), „Treplev.mp3“ (v C202 u Kluse), „fotbálek.mp3“ (u fotbálku), Mykyta/ = písničky od Mykyho
@@ -617,6 +618,8 @@ Uživatel chce postupně tři kroky: **1. hráči se vidí** (hotové), **2. sma
 - **Horor:** víc úkrytů (skříňky, pod katedrou / stolem, pod pingpongem, klavírem, lavičkou, za laboratorním stolem – `HOROR_FURNITURE`, 109 úkrytů; pod nábytkem je vidět jen škvírou u země). E = šuplík, F = schovat (na mobilu dvě tlačítka). Šuplík: čelo s mosaznou úchytkou, plynule se vysune (`H.anim`, `hororDrawerK`), boky, dno, tmavé vnitřky, hláška „Prázdný šuplík…“ / „V šuplíku je baterka!“.
 
 ## Bacha na Láďu (`js/39_horor.js`)
+
+- **Zvuky (`js/42_horor_zvuky.js`):** pozadí `zvuky/horor/horor pozadí.mp3` dokola (místo syntetického hučení). Kabát (`zvuky/horor/Kabát - RUMCAJS…mp3`) hraje od začátku hry pořád, ale s hlasitostí 0 – slyšet je, jen když Láďa honí mě (`mode chase`, `tg` = já): 120 px = naplno, 700 px = 20 %, ztratí-li mě, pomalu se ztiší (nezačíná od začátku; od začátku až v nové hře). Kroky hráče podle podlahy (`HSFX_STEP`), sprint nahlas; dech při honičce, tlumený ve skříni, vrznutí dvířek; šuplík, baterka (vzít, výměna, bzučení pod 12 %), klíč, fanfára za poslední, klíč od Křiváčka, pistole (nabití, výstřel s ozvěnou, naprázdno), tyčinka, očka, lékárnička; online kroky kamarádů, výkřik a sténání ležícího. Napojení obalením `hororBegin`, `hororLeave`, `updateHoror`, `hororDo`, `hororItemKey`, `hororShoot`. **Kde jsou klíče, se v HUD neukazuje** (jen počet).
 
 - **Oprava mapy (28. 10.):** ve vyvýšených částech (hala s pingpongem je na schodech výš) byl pod nábytkem strop pod očima → stoly vypadaly jako sloupy; teď buňka nábytku přebírá strop sousední podlahy. Plná krabice zakrývá jen když stojí na zemi (`box(..., grounded)`). Nábytek ví, kde má přední stranu (`hororModel(o, zb, face)` – strana s volnou podlahou, zády ke zdi). Nové modely: knihovna s jednotlivými knihami, kávovar s reklamou / tlačítky / okénkem, vitríny se sklem a předměty, žebřiny, radiátor se žebry, klavír s víkem, bicí s činely, kytara, kiosek, květiny, sedací vak. Koše v tělocvičně. Průhledné kousky: daleko jen větší, max 48 na sloupec (rychlost).
 
