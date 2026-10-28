@@ -274,7 +274,10 @@ function hororNetTick(H, dt, keys, events) {
   if (net.S && net.round === net.S.k && hororIsHost()) hororHostTick(H, dt);
   else if (H.ladaT && H.lada) {   // Láďa od hostitele: plynule dojede
     const L = H.lada, T = H.ladaT, k = 1 - Math.exp(-10 * dt);
-    if (Math.hypot(T.x - L.x, T.y - L.y) > 200) { L.x = T.x; L.y = T.y; } else { L.x += (T.x - L.x) * k; L.y += (T.y - L.y) * k; }
+    const dd = Math.hypot(T.x - L.x, T.y - L.y), M = L.room === T.room ? hororMap(L.room) : null;
+    // daleko, nebo by plynulý posun přeťal zeď (roh) → rovnou na místo od hostitele
+    const blocked = M && dd > 2 && hororCast(M, L.x, L.y, Math.atan2(T.y - L.y, T.x - L.x), dd).dist < dd - 1;
+    if (dd > 200 || blocked) { L.x = T.x; L.y = T.y; } else { L.x += (T.x - L.x) * k; L.y += (T.y - L.y) * k; }
     L.a = T.a;
   }
   if (H.phase === 'end') {

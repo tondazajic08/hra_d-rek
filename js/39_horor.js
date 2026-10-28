@@ -1953,11 +1953,22 @@ function hororRenderView(H) {
     if (Math.abs(ang) > HOROR.FOV / 2 + 0.25 || d < 8) continue;
     const perp = d * Math.cos(ang), sx = left + width / 2 + Math.tan(ang) * proj;
     const col = Math.max(0, Math.min(cols - 1, Math.floor((sx - left) / HOROR.COL_W)));
-    if (perp > zbuf[col] + (s.kind === 'sign' ? 14 : 6)) continue;   // za zdí
     const cam = Math.tan(ang) / tanF, l0 = hororLightAt(H, perp, cam), fh = s.kind === 'lamp' || s.kind === 'sign' ? 0 : hororHeightAt(M, s.x, s.y, false);
-    const [ca, cb] = clipAt(col, perp - 4);
-    if (cb - ca < 2) continue;
-    ctx.save(); ctx.beginPath(); ctx.rect(left - 50, ca, width + 100, cb - ca); ctx.clip();
+    // co je vidět: po sloupcích přes celou šířku postavy / věci (ne jen uprostřed) – za zdí, rohem
+    // nebo nábytkem se schová i kus postavy (jinak by Láďa „procházel“ stěnou)
+    const halfW = (s.kind === 'sign' ? 160 : s.kind === 'lada' || s.kind === 'mate' || s.kind === 'self' ? 46 : 26) / perp * proj;
+    const c0 = Math.max(0, Math.floor((sx - halfW - left) / HOROR.COL_W)), c1 = Math.min(cols - 1, Math.floor((sx + halfW - left) / HOROR.COL_W));
+    const tol = s.kind === 'sign' ? 14 : 6;
+    ctx.save(); ctx.beginPath();
+    let any = false;
+    for (let c = c0; c <= c1; c++) {
+      if (perp > zbuf[c] + tol) continue;
+      const [ca, cb] = s.kind === 'sign' ? [0, Ht] : clipAt(c, perp - 4);
+      if (cb - ca < 1) continue;
+      ctx.rect(left + c * HOROR.COL_W, ca, HOROR.COL_W + 0.6, cb - ca); any = true;
+    }
+    if (!any) { ctx.restore(); continue; }
+    ctx.clip();
     hororSprite(H, M, s, d, perp, sx, l0, fh, horizon, proj, E);
     ctx.restore();
   }
