@@ -24,47 +24,59 @@ function hsfxAudio(src) {
   try { const a = new Audio(src); a.loop = true; a.preload = 'auto'; a.volume = 0; a.setAttribute('playsinline', ''); return a; } catch (e) { return null; }
 }
 // Hlasitost přes Web Audio (GainNode) – na iPhonu / iPadu nejde měnit audio.volume (je pořád 100 %)
+// Hlasitost přes Web Audio (GainNode), kde to jde; na iPhonu / iPadu nejde měnit audio.volume (je pořád 100 %).
+// Proto se při tichu (a při vypnutém zvuku) skladba vždy POZASTAVÍ. Kabát si přitom pamatuje, kde by
+// „hrál“ (běží dál jen v čase), a když znovu zesílí, skočí na to místo – nezačíná od začátku.
 function hsfxGain(a) {
   if (!a) return null;
-  if (a.gainNode !== undefined) return a.gainNode;
-  a.gainNode = null;
+  if (a.gainNode) return a.gainNode;
   const c = audio.ctx;
   // ze souboru na disku (file://) by zesilovač hrál ticho (cizí původ) – tam jen obyčejná hlasitost
-  if (!c || !c.createMediaElementSource || (location.protocol === 'file:' && !/^data:/.test(a.src))) return null;
+  if (!c || !c.createMediaElementSource || a.gainFail || (location.protocol === 'file:' && !/^data:/.test(a.src))) return null;
   try {
     const src = c.createMediaElementSource(a), g = c.createGain();
     g.gain.value = 0;
     src.connect(g); g.connect(c.destination);
     a.volume = 1;   // hlasitost teď řídí zesilovač
     a.gainNode = g;
-  } catch (e) { a.gainNode = null; }
-  return a.gainNode;
+  } catch (e) { a.gainFail = true; }
+  return a.gainNode || null;
+}
+const hsfxNow = () => performance.now() / 1000;
+function hsfxPlay(a) {
+  if (!a || !a.paused || !hsfx.on || audio.muted) return;
+  if (a === hsfx.chase && hsfx.chaseT0 != null && a.duration > 0) {   // pokračovat tam, kde by Kabát zrovna hrál
+    try { a.currentTime = (hsfxNow() - hsfx.chaseT0) % a.duration; } catch (e) { /* ještě se načítá */ }
+  }
+  const p = a.play();
+  if (p && p.catch) p.catch(() => {});
 }
 function hsfxSetVol(a, v) {
   if (!a) return;
-  v = Math.max(0, Math.min(1, v));
+  v = audio.muted ? 0 : Math.max(0, Math.min(1, v));
   const g = hsfxGain(a);
-  if (g) g.gain.value = v;
-  else {   // bez Web Audio: hlasitost, a kde nejde (iPhone), aspoň pauza při tichu – pak pokračuje, kde přestala
-    a.volume = v;
-    if (v < 0.01 && !a.paused && a === hsfx.chase) a.pause();
-    else if (v >= 0.01 && a.paused && hsfx.on) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
-  }
+  if (g) g.gain.value = v; else a.volume = v;
+  if (v < 0.01) { if (!a.paused) a.pause(); }   // ticho = pauza (funguje i na iPhonu)
+  else hsfxPlay(a);
 }
 function hsfxStart() {
   if (!hsfx.bg) hsfx.bg = hsfxAudio(HOROR_SFX.BG);
   if (!hsfx.chase) hsfx.chase = hsfxAudio(HOROR_SFX.CHASE);
   hsfx.on = true;
+  hsfx.chaseT0 = hsfxNow();   // Kabát „začal hrát“ teď (běží jen v čase, slyšet až při honičce)
   if (audio.ctx && audio.ctx.state === 'suspended' && audio.ctx.resume) audio.ctx.resume().catch(() => {});
+  // odemknout přehrávání na mobilu (jsme ve ťuknutí): pustit a hned zastavit
   for (const a of [hsfx.bg, hsfx.chase]) {
-    if (!a) continue;
-    hsfxSetVol(a, 0);   // nejdřív ticho (na mobilu i Kabát potichu)
-    if (a.paused && (a.gainNode || a === hsfx.bg)) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
+    if (!a || audio.muted) continue;
+    hsfxGain(a);
+    const p = a.play();
+    if (p && p.then) p.then(() => { if (a === hsfx.chase || !hsfx.on) a.pause(); }).catch(() => {}); else if (a === hsfx.chase) a.pause();
   }
 }
 function hsfxStop() {
   hsfx.on = false;
-  for (const a of [hsfx.bg, hsfx.chase]) if (a) { hsfxSetVol(a, 0); a.pause(); }
+  hsfx.chaseT0 = null;
+  for (const a of [hsfx.bg, hsfx.chase]) if (a) { if (a.gainNode) a.gainNode.gain.value = 0; a.pause(); }
   if (hsfx.chase) hsfx.chase.currentTime = 0;   // nová hra = Kabát zase od začátku
   hsfx.chaseVol = 0; hsfx.bgVol = 0;
 }
@@ -150,7 +162,7 @@ const HSFX = {
 }
 function hsfxTick(H, dt) {
   const playing = H.phase === 'play' || H.phase === 'pause' || (H.phase === 'caught' && H.net);
-  if (playing && (!hsfx.on || (hsfx.bg && hsfx.bg.paused)) && !audio.muted) hsfxStart();   // online: kolo spustil hostitel
+  if (playing && !hsfx.on && !audio.muted) hsfxStart();   // online: kolo spustil hostitel
   const k = 1 - Math.exp(-dt * 3), me = hororMe(), L = H.lada, p = H.p;
   // pozadí
   const bgWant = !audio.muted && playing && H.phase !== 'pause' ? HOROR_SFX.BG_VOL : !audio.muted && H.phase === 'pause' ? HOROR_SFX.BG_VOL * 0.4 : 0;
