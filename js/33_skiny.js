@@ -13,6 +13,7 @@
 // =====================================================================
 const SKIN_KEY = 'hra_darek_skin_v1';
 const SKIN_HIDDEN = ['uklizecka'];   // postavy, které nejsou na výběr jako skin
+const SKIN_PRICES = { student: 300, teacher: 450, klus: 500 };   // Kč: studenti, učitelé, Tomáš Klus
 const SKINS = [
   { id: 'roman', name: 'Roman', hair: '#3a2a1c',
     body: CONFIG.PLAYER_VEST, check: CONFIG.PLAYER_VEST_CHECK, collar: CONFIG.PLAYER_SHIRT, arms: CONFIG.PLAYER_SHIRT, pants: CONFIG.PLAYER_PANTS, shoes: CONFIG.PLAYER_SHOES },
@@ -28,13 +29,27 @@ const SKINS = [
 // Postavy ze hry (TEACHERS jsou už načtení – soubory 03–28 jdou před tímhle)
 for (const [id, t] of Object.entries(TEACHERS)) {
   if (!t.look || (!t.look.face && !t.look.hair) || SKIN_HIDDEN.includes(id)) continue;
-  SKINS.push({ id: `p_${id}`, name: t.name, person: id, look: JSON.parse(JSON.stringify(t.look)), color: t.color, hair: t.look.hair || '#3a2a1c' });
+  SKINS.push({ id: `p_${id}`, name: t.name, person: id, look: JSON.parse(JSON.stringify(t.look)), color: t.color, hair: t.look.hair || '#3a2a1c',
+    price: SKIN_PRICES[id] || (t.student ? SKIN_PRICES.student : SKIN_PRICES.teacher) });
+}
+// Koupené skiny (Romanova oblečení jsou zdarma); s účtem se ukládají i na server (41_ucty_a_odmeny.js)
+const SKIN_OWN_KEY = 'hra_darek_skiny_koupene_v1';
+function skinOwned(skin) {
+  if (!skin.price) return true;
+  try { return (JSON.parse(storageGet(SKIN_OWN_KEY) || '[]') || []).includes(skin.id); } catch (e) { return false; }
+}
+function skinBuy(skin) {
+  let list = [];
+  try { list = JSON.parse(storageGet(SKIN_OWN_KEY) || '[]') || []; } catch (e) { list = []; }
+  if (!list.includes(skin.id)) list.push(skin.id);
+  storageSet(SKIN_OWN_KEY, JSON.stringify(list));
 }
 const skinFaces = {};   // id → Image (jen skiny s vlastní hlavou)
 for (const s of SKINS) if (s.face) { skinFaces[s.id] = new Image(); skinFaces[s.id].src = s.face; }
 
 const skinById = (id) => SKINS.find((s) => s.id === id) || null;
 let mySkin = skinById(storageGet(SKIN_KEY)) || SKINS[0];
+if (!skinOwned(mySkin)) mySkin = SKINS[0];   // nekoupený skin (z doby, kdy byly zdarma) → Roman
 function setMySkin(skin) {
   mySkin = skin;
   storageSet(SKIN_KEY, skin.id);
@@ -194,6 +209,13 @@ function skinsMove(d) {
 function skinsPick() {
   const skin = SKINS[state.skins.sel];
   if (skin === mySkin) { skinsLeave(); return; }
+  if (!skinOwned(skin)) {   // zamčený: koupit za peníze ze hry
+    const money = mainMoneyGet();
+    if (money < skin.price) { state.skins.msg = `Chybí ti ${skin.price - money} Kč (máš ${money} Kč)`; state.skins.msgT = 2.5; playSound(CONFIG.SOUND_MISS); return; }
+    mainMoneyAdd(-skin.price);
+    skinBuy(skin);
+    acctDirty();
+  }
   setMySkin(skin);
   playSound(CONFIG.SOUND_COMPLETE);
   state.toast = { text: `Teď máš na sobě: ${skin.name}`, t: CONFIG.TOAST_TIME };
@@ -206,6 +228,7 @@ function updateSkins(dt) {
   const s = state.skins;
   const events = input.events.splice(0), keys = s.keys.splice(0);
   s.t += dt;
+  if (s.msgT > 0) s.msgT -= dt;
   if (s.spin >= 0) { s.spin += dt / SKIN_UI.SPIN_TIME; if (s.spin >= 1) s.spin = -1; }
   s.slide *= Math.exp(-dt * 12);
   if (Math.abs(s.slide) < 0.002) s.slide = 0;
@@ -336,12 +359,15 @@ function renderSkins() {
   roundRectPath(220, 536, 330, 46, 12);
   ctx.fillStyle = 'rgba(20, 22, 34, 0.8)'; ctx.fill();
   drawOutlinedText(skin.name, 385, 553, 'bold 18px sans-serif', '#ffffff', 'middle');
-  drawOutlinedText(`${s.sel + 1} / ${SKINS.length}${skin === mySkin ? '  ·  máš na sobě' : ''}`, 385, 572, 'bold 11px sans-serif', '#e8d3a8', 'middle');
-  const P = U.PICK, on = skin === mySkin;
+  const owned = skinOwned(skin), money = mainMoneyGet();
+  drawOutlinedText(`${s.sel + 1} / ${SKINS.length}${skin === mySkin ? '  ·  máš na sobě' : owned ? (skin.price ? '  ·  koupeno' : '') : `  ·  🔒 ${skin.price} Kč`}`, 385, 572, 'bold 11px sans-serif', owned ? '#e8d3a8' : '#ffd54a', 'middle');
+  const P = U.PICK, on = skin === mySkin, can = owned || money >= skin.price;
   roundRectPath(P.x, P.y, P.w, P.h, 12);
-  ctx.fillStyle = on ? '#5a4636' : '#2e7d32'; ctx.fill();
+  ctx.fillStyle = on ? '#5a4636' : owned ? '#2e7d32' : can ? '#b8860b' : '#6a3030'; ctx.fill();
   ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'; ctx.lineWidth = 2; ctx.stroke();
-  drawOutlinedText(on ? '✓ Hotovo' : '✓ Vybrat', P.x + P.w / 2, P.y + P.h / 2 + 1, 'bold 19px sans-serif', '#ffffff', 'middle');
+  drawOutlinedText(on ? '✓ Hotovo' : owned ? '✓ Vybrat' : `🔒 Koupit ${skin.price} Kč`, P.x + P.w / 2, P.y + P.h / 2 + 1, 'bold 17px sans-serif', '#ffffff', 'middle');
+  drawOutlinedText(`💰 ${money} Kč`, 400, 512, 'bold 18px sans-serif', money < 0 ? '#ff8a80' : '#ffd54a', 'middle');
+  if (s.msgT > 0) drawOutlinedText(s.msg, 400, 488, 'bold 17px sans-serif', '#ff8a80', 'middle');
   const q = U.QUIT;
   roundRectPath(q.x, q.y, q.w, q.h, 10);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fill();

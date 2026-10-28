@@ -15,12 +15,13 @@
 //    se k uložení nedá dostat (pravidla nedovolí vypsat ucty/<jméno>). Je to jednoduché, ne jako v bance:
 //    heslo nepoužívej stejné jako jinde.
 // =====================================================================
+const mainMoneyLive = () => !state.mode && (state.screen === 'playing' || state.screen === 'skins');   // rozehraná hlavní hra (i u Lockeru)
 function mainMoneyGet() {
-  if (!state.mode && state.screen === 'playing') return state.money;
+  if (mainMoneyLive()) return state.money;
   try { const d = JSON.parse(storageGet(CONFIG.SAVE_KEY) || 'null'); return d && Number.isFinite(d.money) ? d.money : 0; } catch (e) { return 0; }
 }
 function mainMoneyAdd(n) {
-  if (!state.mode && state.screen === 'playing') { state.money += n; saveProgress(); return; }
+  if (mainMoneyLive()) { state.money += n; saveProgress(); return; }
   let d = null;
   try { d = JSON.parse(storageGet(CONFIG.SAVE_KEY) || 'null'); } catch (e) { d = null; }
   if (!d || typeof d !== 'object') d = { quests: {}, tracked: null, money: 0, bag: [], story: null, vrah: null, speedrun: null };
