@@ -225,6 +225,7 @@ function acctApply(data) {
   state.savedGame = loadProgress();
   state.savedVrah = loadProgress(CONFIG.SAVE_KEY_VRAH);
   mySkin = skinById(storageGet(SKIN_KEY)) || SKINS[0];
+  if (!skinOwned(mySkin)) setMySkin(SKINS[0]);   // nekoupený skin z účtu (z doby, kdy byly zdarma) → Roman
   startPlace = START_PLACES.find((p) => p.id === storageGet(START_KEY)) || START_PLACES[0];
 }
 function acctUpload() {

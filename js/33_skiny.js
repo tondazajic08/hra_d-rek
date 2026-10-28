@@ -49,8 +49,9 @@ for (const s of SKINS) if (s.face) { skinFaces[s.id] = new Image(); skinFaces[s.
 
 const skinById = (id) => SKINS.find((s) => s.id === id) || null;
 let mySkin = skinById(storageGet(SKIN_KEY)) || SKINS[0];
-if (!skinOwned(mySkin)) mySkin = SKINS[0];   // nekoupený skin (z doby, kdy byly zdarma) → Roman
+if (!skinOwned(mySkin)) { mySkin = SKINS[0]; storageSet(SKIN_KEY, SKINS[0].id); }   // nekoupený skin (z doby, kdy byly zdarma) → Roman (i v uložení, ať se nevrátí z účtu)
 function setMySkin(skin) {
+  if (!skinOwned(skin)) skin = SKINS[0];   // zamčený skin nejde obléct bez koupě
   mySkin = skin;
   storageSet(SKIN_KEY, skin.id);
 }
