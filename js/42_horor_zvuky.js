@@ -21,15 +21,50 @@ const HOROR_SFX = {
 };
 const hsfx = { bg: null, chase: null, chaseVol: 0, bgVol: 0, stepI: 0, hid: null, breathT: 0, buzzT: 0, got: 0, bat: 100, ammo: null, mates: {}, down: {}, moanT: {} };
 function hsfxAudio(src) {
-  try { const a = new Audio(src); a.loop = true; a.preload = 'auto'; a.volume = 0; return a; } catch (e) { return null; }
+  try { const a = new Audio(src); a.loop = true; a.preload = 'auto'; a.volume = 0; a.setAttribute('playsinline', ''); return a; } catch (e) { return null; }
+}
+// Hlasitost přes Web Audio (GainNode) – na iPhonu / iPadu nejde měnit audio.volume (je pořád 100 %)
+function hsfxGain(a) {
+  if (!a) return null;
+  if (a.gainNode !== undefined) return a.gainNode;
+  a.gainNode = null;
+  const c = audio.ctx;
+  // ze souboru na disku (file://) by zesilovač hrál ticho (cizí původ) – tam jen obyčejná hlasitost
+  if (!c || !c.createMediaElementSource || (location.protocol === 'file:' && !/^data:/.test(a.src))) return null;
+  try {
+    const src = c.createMediaElementSource(a), g = c.createGain();
+    g.gain.value = 0;
+    src.connect(g); g.connect(c.destination);
+    a.volume = 1;   // hlasitost teď řídí zesilovač
+    a.gainNode = g;
+  } catch (e) { a.gainNode = null; }
+  return a.gainNode;
+}
+function hsfxSetVol(a, v) {
+  if (!a) return;
+  v = Math.max(0, Math.min(1, v));
+  const g = hsfxGain(a);
+  if (g) g.gain.value = v;
+  else {   // bez Web Audio: hlasitost, a kde nejde (iPhone), aspoň pauza při tichu – pak pokračuje, kde přestala
+    a.volume = v;
+    if (v < 0.01 && !a.paused && a === hsfx.chase) a.pause();
+    else if (v >= 0.01 && a.paused && hsfx.on) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
+  }
 }
 function hsfxStart() {
   if (!hsfx.bg) hsfx.bg = hsfxAudio(HOROR_SFX.BG);
   if (!hsfx.chase) hsfx.chase = hsfxAudio(HOROR_SFX.CHASE);
-  for (const a of [hsfx.bg, hsfx.chase]) if (a && a.paused) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
+  hsfx.on = true;
+  if (audio.ctx && audio.ctx.state === 'suspended' && audio.ctx.resume) audio.ctx.resume().catch(() => {});
+  for (const a of [hsfx.bg, hsfx.chase]) {
+    if (!a) continue;
+    hsfxSetVol(a, 0);   // nejdřív ticho (na mobilu i Kabát potichu)
+    if (a.paused && (a.gainNode || a === hsfx.bg)) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
+  }
 }
 function hsfxStop() {
-  for (const a of [hsfx.bg, hsfx.chase]) if (a) { a.pause(); a.volume = 0; }
+  hsfx.on = false;
+  for (const a of [hsfx.bg, hsfx.chase]) if (a) { hsfxSetVol(a, 0); a.pause(); }
   if (hsfx.chase) hsfx.chase.currentTime = 0;   // nová hra = Kabát zase od začátku
   hsfx.chaseVol = 0; hsfx.bgVol = 0;
 }
@@ -115,12 +150,12 @@ const HSFX = {
 }
 function hsfxTick(H, dt) {
   const playing = H.phase === 'play' || H.phase === 'pause' || (H.phase === 'caught' && H.net);
-  if (playing && hsfx.bg && hsfx.bg.paused && !audio.muted) hsfxStart();   // online: kolo spustil hostitel
+  if (playing && (!hsfx.on || (hsfx.bg && hsfx.bg.paused)) && !audio.muted) hsfxStart();   // online: kolo spustil hostitel
   const k = 1 - Math.exp(-dt * 3), me = hororMe(), L = H.lada, p = H.p;
   // pozadí
   const bgWant = !audio.muted && playing && H.phase !== 'pause' ? HOROR_SFX.BG_VOL : !audio.muted && H.phase === 'pause' ? HOROR_SFX.BG_VOL * 0.4 : 0;
   hsfx.bgVol += (bgWant - hsfx.bgVol) * k;
-  if (hsfx.bg) hsfx.bg.volume = Math.max(0, Math.min(1, hsfx.bgVol));
+  hsfxSetVol(hsfx.bg, hsfx.bgVol);
   // Kabát: jen když mě Láďa honí, hlasitost podle vzdálenosti
   let chaseWant = 0;
   if (!audio.muted && H.phase === 'play' && L && p && L.mode === 'chase' && L.tg === me && !H.ghost) {
@@ -128,7 +163,7 @@ function hsfxTick(H, dt) {
     chaseWant = HOROR_SFX.CHASE_MAX * Math.max(0.2, Math.min(1, 1 - (d - HOROR_SFX.CHASE_NEAR) / (HOROR_SFX.CHASE_FAR - HOROR_SFX.CHASE_NEAR)));
   }
   hsfx.chaseVol += (chaseWant - hsfx.chaseVol) * (chaseWant > hsfx.chaseVol ? 1 - Math.exp(-dt * 6) : 1 - Math.exp(-dt * 1.2));   // nahoru rychle, dolů pomalu
-  if (hsfx.chase) hsfx.chase.volume = Math.max(0, Math.min(1, hsfx.chaseVol));
+  hsfxSetVol(hsfx.chase, hsfx.chaseVol);
   if (H.phase !== 'play' || !p) return;
   const M = hororMap(p.room);
   // vlastní kroky (podle fáze chůze z hororu – H.walk roste při pohybu)

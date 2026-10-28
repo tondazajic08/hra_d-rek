@@ -1283,6 +1283,7 @@ window.addEventListener('mousedown', (e) => {   // klik se zamčenou myší = v�
   const H = state.horor;
   if (H && state.screen === 'horor' && H.phase === 'play' && document.pointerLockElement === canvas && e.button === 0) hororKeys.push('Mouse0');
 });
+const HOROR_RUN_BTN = { x: 660, y: 248, w: 120, h: 60 };   // vpravo nad tlačítky (palec)
 const HOROR_BAT_BTN = { x: 660, y: 396, w: 120, h: 60 }, HOROR_GIVE_BTN = { x: 660, y: 322, w: 120, h: 60 }, HOROR_DRAWER_BTN = { x: 530, y: 470, w: 120, h: 60 };
 function updateHoror(dt) {
   const H = state.horor, keys = hororKeys.splice(0), events = input.events.splice(0);
@@ -1385,7 +1386,10 @@ function updateHoror(dt) {
   if (j.active && Math.hypot(j.dx, j.dy) > CONFIG.JOY_DEADZONE) { fwd = -j.dy; side = j.dx; }
   if (H.hidden || H.downed) { fwd = 0; side = 0; }   // ve skříni / ležíš (online)
   const len = Math.hypot(fwd, side);
-  const wantRun = (k('ShiftLeft') || k('ShiftRight') || (j.active && Math.hypot(j.dx, j.dy) > 0.95)) && len > 0;
+  // sprint: Shift, na mobilu tlačítko 🏃 (zapne / vypne; samo se vypne, když se zastavíš nebo dojde dech)
+  if (events.some((e) => e.x != null && isTouchHint() && pointInRect(e.x, e.y, HOROR_RUN_BTN, 6))) H.runOn = !H.runOn;
+  if (H.runOn && (H.tired || (len === 0 && !(j.active)))) H.runOn = false;
+  const wantRun = (k('ShiftLeft') || k('ShiftRight') || H.runOn) && len > 0;
   // výdrž: sprint ji bere, jinak se obnovuje; po vyčerpání chvíli sprintovat nejde
   if (H.tired && H.stamina >= HOROR.TIRED) H.tired = false;
   H.running = wantRun && !H.tired && H.stamina > 0;
@@ -2047,6 +2051,7 @@ function drawHororHud(H) {
       else drawChessButton(HOROR_HIDE_BTN, `🫣 ${label}`, false, '#4a3a28');
     }
     if (!keysHint && sp > 0 && H.bat < 60 && !H.ghost) drawChessButton(HOROR_BAT_BTN, '🔋 Vyměnit', false, '#3d5a2a');
+    if (!keysHint && !H.ghost && !H.downed) drawChessButton(HOROR_RUN_BTN, H.runOn ? '🏃 Sprint ZAP' : '🏃 Sprint', !!H.runOn, H.runOn ? '#2e7d32' : '#3a3f4a');
     const mate = typeof hororMateNear === 'function' ? hororMateNear(H) : null;
     if (mate && sp > 0 && !H.ghost) {
       if (keysHint) drawOutlinedText(`G – půjčit baterku: ${mate.n}`, W / 2, Ht - 86, 'bold 15px sans-serif', '#a5d6a7', 'middle');
@@ -2060,7 +2065,7 @@ function drawHororHud(H) {
     ['Je noc. Zůstal jsi zamčený ve škole.', 'Po chodbách a třídách chodí Láďa… a hledá tě.', `Najdi ${HOROR.KEYS} klíčů (pokaždé jinde) a uteč hlavním vchodem.`,
       'Když tě uvidí, utíkej – ztrať se mu z očí, nebo se schovej.', 'Baterka se vybíjí – nové jsou v šuplících. Klíč od Křiváčka 🗝 odemkne jeho kabinet s pistolí.']
       .forEach((t, i) => drawOutlinedText(t, W / 2, 185 + i * 28, 'bold 16px sans-serif', '#ffffff', 'middle', W - 40));
-    drawOutlinedText(keysHint ? 'WASD – chůze · myš – rozhlížení · Shift – sprint · E – šuplík · F – schovat · R – baterka' : 'Joystick vlevo – chůze (naplno = sprint) · táhni vpravo – rozhlížení', W / 2, 335, 'bold 13px sans-serif', '#cfcfcf', 'middle', W - 30);
+    drawOutlinedText(keysHint ? 'WASD – chůze · myš – rozhlížení · Shift – sprint · E – šuplík · F – schovat · R – baterka' : 'Joystick vlevo – chůze · 🏃 = sprint · táhni vpravo – rozhlížení', W / 2, 335, 'bold 13px sans-serif', '#cfcfcf', 'middle', W - 30);
     drawOutlinedText(`🎧 Nejlepší se sluchátky   ·   💰 ${typeof mainMoneyGet === 'function' ? mainMoneyGet() : 0} Kč   ·   za útěk +250 Kč`, W / 2, 365, 'bold 14px sans-serif', '#ffd54a', 'middle');
     ['🔦 Hrát sám', '👥 Hrát s kamarády (online, max 4)', '⭐ Vylepšení postavy', 'Zpět'].forEach((t, i) => drawChessButton(HOROR_MENU[i], t, i === H.menuSel, ['#7a2a2a', '#2f5a7a', '#7a5a12', '#5a4636'][i]));
   } else if (H.phase === 'pause') {
