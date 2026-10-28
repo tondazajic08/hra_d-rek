@@ -93,9 +93,10 @@ const HOROR_HIDE_IN = ['wardrobe', 'lockers', 'stall'];   // uvnitř (škvíra m
 // dvířka skříněk… Měřítko: 1 px ≈ 2,5 cm (stůl 30 = 75 cm, sedák 18, skříňka 74, strop 130).
 // drawer = kde je šuplík (otevírá se, může v něm být baterka): { lo, hi } výška čela
 const hororRGB = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-function hororModel(o, zb) {
+function hororModel(o, zb, face) {   // face = strana s volnou podlahou ('top' | 'bottom' | 'left' | 'right'), kam míří přední strana
   const r = o.rect, k = o.kind, B = [];
-  const box = (x, y, w, h, z0, z1, c, solid) => { if (w > 0.2 && h > 0.2) B.push({ x, y, w, h, z0, z1, c: typeof c === 'string' ? hororRGB(c) : c, s: solid ? 1 : 0 }); };
+  // solid = zakrývá, co je za ním (jen když stojí na zemi – vznášející se deska / police nesmí zakrýt prostor pod sebou)
+  const box = (x, y, w, h, z0, z1, c, solid, grounded) => { if (w > 0.2 && h > 0.2) B.push({ x, y, w, h, z0, z1, c: typeof c === 'string' ? hororRGB(c) : c, s: solid && (z0 <= 0.5 || grounded) ? 1 : 0 }); };
   const legs = (t, z, c) => {
     const s = 2.5;
     for (const [x, y] of [[t.x + 1, t.y + 1], [t.x + t.w - 1 - s, t.y + 1], [t.x + 1, t.y + t.h - 1 - s], [t.x + t.w - 1 - s, t.y + t.h - 1 - s]]) box(x, y, s, s, 0, z, c || '#55565a', 0);
@@ -120,8 +121,21 @@ function hororModel(o, zb) {
       box(x, y, 1.6, 1.6, z, z + h - 3, post, 0);
     }
   };
-  const stack = (layers, rr) => { const q = rr || r; for (const [z0, z1, c] of layers) box(q.x, q.y, q.w, q.h, z0, z1, c, 1); };
+  const stack = (layers, rr) => {   // vrstvy na sobě; souvislá řada od země zakrývá
+    const q = rr || r;
+    let top = 0;
+    for (const [z0, z1, c] of layers) { const g = z0 <= top + 0.01; box(q.x, q.y, q.w, q.h, z0, z1, c, 1, g); if (g) top = Math.max(top, z1); }
+  };
   const inset = (q, d) => ({ x: q.x + d, y: q.y + d, w: q.w - 2 * d, h: q.h - 2 * d });
+  const fc = face || 'bottom', fh = fc === 'top' || fc === 'bottom';
+  // tenký panel na přední straně: a0..a1 = podíl šířky (0..1), z0..z1 výška, out = jak daleko před čelem
+  const panel = (a0, a1, z0, z1, c, out) => {
+    const d = out || 0.8, len = fh ? r.w : r.h, s0 = (fh ? r.x : r.y) + len * a0, l = len * (a1 - a0);
+    if (fh) box(s0, fc === 'top' ? r.y - d : r.y + r.h, l, d, z0, z1, c, 0);
+    else box(fc === 'left' ? r.x - d : r.x + r.w, s0, d, l, z0, z1, c, 0);
+  };
+  let rs = (Math.round(r.x * 7 + r.y * 13) | 0) || 1;
+  const rnd = () => { rs = (Math.imul(rs, 1103515245) + 12345) | 0; return ((rs >>> 8) & 0xffff) / 65536; };
   let drawer = null;
   if (k === 'desk') {
     const chairs = o.chairs !== false;
@@ -185,7 +199,12 @@ function hororModel(o, zb) {
       box(cx - 1, cy - 8, 2, 2, 34, 44, '#7d868c', 0);
     }
   } else if (k === 'pillar') stack([[0, 5, '#1c2030'], [5, 130, '#f2f4f6']]);
-  else if (k === 'radiator') stack([[3, 24, o.color || '#e6d48f']]);
+  else if (k === 'radiator') {   // radiátor: žebra po 4 px a trubka nahoře
+    const horiz = r.w >= r.h, len = horiz ? r.w : r.h, c = o.color || '#e6d48f';
+    for (let a = 0; a < len - 1; a += 4) box(horiz ? r.x + a : r.x, horiz ? r.y : r.y + a, horiz ? 2.6 : r.w, horiz ? r.h : 2.6, 4, 24, c, 1);
+    box(r.x, r.y, r.w, r.h, 24, 26, o.rib || '#bfa95e', 0);
+    legs(r, 4, '#8a8a8a');
+  }
   else if (k === 'chair') chair(inset(r, 2), 'bottom', '#2f62c4', '#1d3f86');
   else if (k === 'lockers') {   // plechové skříňky: dvířka po 14 px, každé svou barvou
     const horiz = r.w >= r.h, len = horiz ? r.w : r.h;
@@ -198,16 +217,35 @@ function hororModel(o, zb) {
   else if (k === 'railing') { if (Math.min(r.w, r.h) <= 14) rail(o.handrail || '#c48a4f', o.color || '#b9bfc3', 40); else stack([[0, 38, o.color || '#b9bfc3'], [38, 41, o.handrail || '#c48a4f']]); }
   else if (k === 'ironrail') rail('#a8703f', '#161616', 40);
   else if (k === 'pingpong') { table(r, 30, '#1f4e79'); const h = r.w >= r.h; box(h ? r.x + r.w / 2 - 1 : r.x - 3, h ? r.y - 3 : r.y + r.h / 2 - 1, h ? 2 : r.w + 6, h ? r.h + 6 : 2, 30, 36, '#e8e8e8', 0); }
-  else if (k === 'wallbars') stack([[0, 100, '#c9965a']]);
+  else if (k === 'wallbars') {   // žebřiny: svislé hranoly po 30 px a příčky po 8 px (je mezi nimi vidět)
+    const horiz = r.w >= r.h, len = horiz ? r.w : r.h, th = horiz ? r.h : r.w, c0 = horiz ? r.y : r.x;
+    const B = (a, l, z0, z1, c) => box(horiz ? r.x + a : c0, horiz ? c0 : r.y + a, horiz ? l : th, horiz ? th : l, z0, z1, c, 0);
+    for (let a = 0; a <= len - 3; a += 30) B(a, 3, 0, 110, '#a8763f');
+    if ((len - 3) % 30) B(len - 3, 3, 0, 110, '#a8763f');
+    for (let z = 6; z < 108; z += 8) B(0, len, z, z + 2, '#c9965a');
+  }
   else if (k === 'pole') stack([[0, 100, '#2a4fa8']]);
-  else if (k === 'shelf') {   // knihovna: dole skříňka se šuplíkem, nad ní police s barevnými knihami
-    let s = Math.round(r.x * 7 + r.y) | 0;
-    const rnd = () => { s = (Math.imul(s, 1103515245) + 12345) | 0; return ((s >>> 8) & 0xffff) / 65536; };
-    const books = ['#c0392b', '#2e86c1', '#f1c40f', '#27ae60', '#8e44ad', '#ecf0f1'];
-    const L = [[0, 24, '#7e5a36']];
-    for (let z = 24; z < 78; z += 18) L.push([z, z + 2, '#6e4a2a'], [z + 2, z + 18, books[Math.floor(rnd() * books.length)]]);
-    L.push([78, 82, '#6e4a2a']);
-    stack(L);
+  else if (k === 'shelf') {   // knihovna: dole skříňka se šuplíkem, nad ní 3 police s jednotlivými knihami
+    const books = ['#c0392b', '#2e86c1', '#f1c40f', '#27ae60', '#8e44ad', '#ecf0f1', '#d35400', '#34495e'];
+    const horiz = r.w >= r.h, len = horiz ? r.w : r.h, dep = horiz ? r.h : r.w;
+    stack([[0, 24, '#7e5a36']]);
+    for (const z of [24, 42, 60]) box(r.x, r.y, r.w, r.h, z, z + 2, '#6e4a2a', 0);   // police
+    box(r.x, r.y, r.w, r.h, 78, 82, '#6e4a2a', 1);
+    const sideW = 2;   // boky
+    box(r.x, r.y, horiz ? sideW : r.w, horiz ? r.h : sideW, 24, 78, '#6e4a2a', 1);
+    box(horiz ? r.x + r.w - sideW : r.x, horiz ? r.y : r.y + r.h - sideW, horiz ? sideW : r.w, horiz ? r.h : sideW, 24, 78, '#6e4a2a', 1);
+    // zadní stěna (dál od volné podlahy)
+    const back = { top: [r.x, r.y + r.h - 1, r.w, 1], bottom: [r.x, r.y, r.w, 1], left: [r.x + r.w - 1, r.y, 1, r.h], right: [r.x, r.y, 1, r.h] }[fc];
+    box(back[0], back[1], back[2], back[3], 24, 78, '#5a3c22', 1);
+    for (const z of [26, 44, 62]) {
+      for (let a = sideW + 0.5; a < len - sideW - 1.5;) {
+        const bw = 2 + rnd() * 2.6, bh = 10 + rnd() * 5.5, gap = rnd() < 0.12 ? 3 + rnd() * 4 : 0.35;
+        if (a + bw > len - sideW - 0.5) break;
+        const d0 = 1.5, dd = dep - 3 - rnd() * 2, c = books[Math.floor(rnd() * books.length)];
+        box(horiz ? r.x + a : r.x + d0, horiz ? r.y + d0 : r.y + a, horiz ? bw : dd, horiz ? dd : bw, z, z + bh, c, 1);
+        a += bw + gap;
+      }
+    }
     drawer = { lo: 6, hi: 22 };
   } else if (k === 'lowwall') stack([[0, 36, '#f2f1ed'], [36, 40, '#c8955a']]);
   else if (k === 'plainwall') stack([[0, 130, '#eceeef']]);
@@ -219,11 +257,29 @@ function hororModel(o, zb) {
       const a = i * seat + 1.5;
       chair(vert ? { x: r.x, y: r.y + a, w: r.w, h: seat - 3 } : { x: r.x + a, y: r.y, w: seat - 3, h: r.h }, back, '#2459c2', '#173c8c');
     }
-  } else if (k === 'coffeemachine') stack([[0, 20, '#4fb07a'], [20, 50, '#1d1d20'], [50, 62, '#f4f4f4'], [62, 80, '#e98a3a']]);
+  } else if (k === 'coffeemachine') {   // kávovar: černá skříň, vpředu reklama, tlačítka, výdejní okénko, reklama dole
+    stack([[0, 84, '#1d1d20'], [84, 86, '#5a3420']]);
+    panel(0.08, 0.92, 62, 82, '#e98a3a');
+    panel(0.12, 0.42, 66, 78, '#5a3420', 1.2);
+    panel(0.55, 0.88, 40, 58, '#f4f4f4');
+    for (let i = 0; i < 4; i++) panel(0.6, 0.83, 54 - i * 4, 55.5 - i * 4, '#9aa0a6', 1.4);
+    panel(0.15, 0.48, 40, 56, '#2c4a5a');   // displej
+    panel(0.3, 0.7, 24, 34, '#3a3a3e', 0.4);   // výdejní okénko
+    panel(0.08, 0.92, 4, 20, '#4fb07a');
+  }
   else if (k === 'printer') stack([[0, 26, '#6d7175'], [26, 38, '#c8cbce'], [38, 42, '#8f9499']]);
   else if (k === 'roundtable') { table(inset(r, 4), 30, '#dca66a'); chair({ x: r.x + r.w - 14, y: r.y + r.h - 14, w: 12, h: 12 }, 'right', '#6aa6dc'); }
   else if (k === 'stage') stack([[0, 16, '#7a4a26']]);
-  else if (k === 'piano') { stack([[0, 24, '#111113']]); box(r.x, r.y, r.w, 6, 24, 26, '#f4f4f0', 0); box(r.x, r.y + 6, r.w, r.h - 6, 24, 40, '#111113', 0); }
+  else if (k === 'piano') {   // křídlo: tělo na nohách, klávesnice, otevřené víko na tyčce
+    const body = { x: r.x, y: r.y + 6, w: r.w, h: r.h - 6 };
+    box(body.x, body.y, body.w, body.h, 24, 34, '#111113', 0);
+    for (const [x, y] of [[body.x + 2, body.y + 2], [body.x + body.w - 5, body.y + 2], [body.x + body.w / 2 - 1.5, body.y + body.h - 5]]) box(x, y, 3, 3, 0, 24, '#111113', 0);
+    box(r.x, r.y, r.w, 6, 26, 28, '#f4f4f0', 0);   // bílé klávesy
+    for (let x = r.x + 3; x < r.x + r.w - 2; x += 5) box(x, r.y, 2, 3.5, 28, 29, '#111113', 0);   // černé klávesy
+    box(r.x, r.y + 6, r.w, 1.5, 28, 40, '#111113', 0);   // stojan na noty
+    box(body.x + 2, body.y + 4, body.w - 4, body.h - 6, 46, 47.5, '#1d1d20', 0);   // víko
+    box(body.x + body.w - 6, body.y + body.h / 2, 1.5, 1.5, 34, 46, '#555', 0);   // tyčka víka
+  }
   else if (k === 'aulachairs') {
     for (let x = r.x + 4; x + 20 <= r.x + r.w; x += 34) for (let y = r.y + 3; y + 20 <= r.y + r.h; y += 24) {
       chair({ x, y, w: 20, h: 20 }, 'none', '#6b2a5e');
@@ -232,16 +288,45 @@ function hororModel(o, zb) {
   } else if (k === 'wardrobe') stack([[0, 4, '#7a5430'], [4, 84, '#c48c52'], [84, 86, '#b07a44']]);
   else if (k === 'lowtable') table(r, 18, '#d3a46c');
   else if (k === 'chesstable') { table(r, 30, '#1c1c1e'); box(r.x + 3, r.y + 3, r.w - 6, r.h - 6, 30, 30.6, '#9a9a9a', 0); }
-  else if (k === 'beanbag') stack([[0, 12, '#2f4c90']]);
+  else if (k === 'beanbag') { stack([[0, 10, '#2f4c90']]); box(r.x + 3, r.y + 3, r.w - 6, r.h - 6, 10, 16, '#22386e', 1); }
   else if (k === 'foosball') {
     stack([[0, 33, '#1a1a1c'], [33, 34, '#2f8a3e']]);
     const vert = r.h > r.w;
     for (let i = 1; i < 9; i++) { const a = (vert ? r.h : r.w) * i / 9; box(vert ? r.x - 4 : r.x + a - 1, vert ? r.y + a - 1 : r.y - 4, vert ? r.w + 8 : 2, vert ? 2 : r.h + 8, 36, 38, '#c9ccd0', 0); }
-  } else if (k === 'kiosk') stack([[0, 52, '#e9e7e2'], [52, 58, '#5a8fe0']]);
-  else if (k === 'showcase') stack([[0, 30, '#d9b77e'], [30, 80, '#bcd6df'], [80, 82, '#d9b77e']]);
+  } else if (k === 'kiosk') {   // informační kiosek: noha a skříň s obrazovkou, dole klávesnice
+    box(r.x + r.w / 2 - 5, r.y + r.h / 2 - 5, 10, 10, 0, 30, '#c9c7c2', 1);
+    box(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 0, 3, '#c9c7c2', 1);
+    stack([[30, 66, '#e9e7e2']], inset(r, 2));
+    panel(0.15, 0.85, 42, 62, '#1f4fb0', -1.2);
+    panel(0.2, 0.8, 44, 60, '#5a8fe0', -1);
+    panel(0.3, 0.7, 33, 37, '#2b2b2b', -1);
+  } else if (k === 'showcase' || k === 'trophies') {   // prosklená vitrína: dřevěný / kovový rám, police a předměty uvnitř (sklo je průhledné)
+    const show = k === 'showcase', frame = show ? '#d9b77e' : '#c7cdd2', top = show ? 80 : 84;
+    stack([[0, 28, frame]]);
+    box(r.x, r.y, r.w, r.h, top, top + 3, frame, 1);
+    for (const [x, y] of [[r.x, r.y], [r.x + r.w - 2, r.y], [r.x, r.y + r.h - 2], [r.x + r.w - 2, r.y + r.h - 2]]) box(x, y, 2, 2, 28, top, frame, 1);
+    const back = { top: [r.x, r.y + r.h - 1, r.w, 1], bottom: [r.x, r.y, r.w, 1], left: [r.x + r.w - 1, r.y, 1, r.h], right: [r.x, r.y, 1, r.h] }[fc];
+    box(back[0], back[1], back[2], back[3], 28, top, show ? '#e8cc98' : '#dfeaf0', 1);
+    box(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 54, 55, show ? '#e8cc98' : '#eef3f6', 0);   // police
+    const horiz = r.w >= r.h, len = horiz ? r.w : r.h, n = Math.max(1, Math.floor(len / 10));
+    for (const z of [28, 55]) for (let i = 0; i < n; i++) {
+      const a = (i + 0.5) * len / n, c = show ? ['#e8742c', '#2d7fd6', '#c0392b'][i % 3] : (i % 3 === 2 ? '#c0c4c8' : '#e2b52c');
+      const x = horiz ? r.x + a - 2 : r.x + r.w / 2 - 2, y = horiz ? r.y + r.h / 2 - 2 : r.y + a - 2;
+      if (show) box(x, y, 4, 4, z, z + 8 + (i % 2) * 4, c, 0);
+      else { box(x + 0.5, y + 0.5, 3, 3, z, z + 2, '#8a6a1c', 0); box(x + 1.5, y + 1.5, 1, 1, z + 2, z + 8, c, 0); box(x, y, 4, 4, z + 8, z + 14, c, 0); }   // pohár: podstavec, nožka, kalich
+    }
+  }
   else if (k === 'bins') { const h = r.w >= r.h; stack([[0, 26, '#f0c419']], h ? { x: r.x, y: r.y, w: r.w / 2 - 1, h: r.h } : { x: r.x, y: r.y, w: r.w, h: r.h / 2 - 1 }); stack([[0, 26, '#2e63c9']], h ? { x: r.x + r.w / 2, y: r.y, w: r.w / 2, h: r.h } : { x: r.x, y: r.y + r.h / 2, w: r.w, h: r.h / 2 }); }
-  else if (k === 'trophies') stack([[0, 30, '#c7cdd2'], [30, 76, '#dfeaf0'], [76, 80, '#c7cdd2']]);
-  else if (k === 'plant' || k === 'grassplant') { stack([[0, 12, '#a0522d']], inset(r, r.w * 0.22)); box(r.x, r.y, r.w, r.h, 12, k === 'plant' ? 44 : 30, k === 'plant' ? '#3f8f3f' : '#5fa04a', 0); }
+  else if (k === 'plant' || k === 'grassplant') {   // květina: květináč a trs listů (několik různě vysokých chomáčů)
+    const pot = inset(r, r.w * 0.22), tall = k === 'plant' ? 46 : 30, greens = ['#2f7a34', '#3f8f3f', '#57a84a', '#2a6a2e'];
+    stack([[0, 12, '#a0522d'], [12, 13.5, '#6d3a1d']], pot);
+    for (let i = 0; i < 7; i++) {
+      const sz = r.w * (0.25 + rnd() * 0.25), cx = r.x + r.w / 2 + (rnd() - 0.5) * r.w * 0.55, cy = r.y + r.h / 2 + (rnd() - 0.5) * r.h * 0.55;
+      const z0 = 12 + rnd() * (tall - 22), z1 = Math.min(tall, z0 + 8 + rnd() * 12);
+      box(cx - sz / 2, cy - sz / 2, sz, sz, z0, z1, greens[i % greens.length], 0);
+    }
+    box(r.x + r.w / 2 - 1, r.y + r.h / 2 - 1, 2, 2, 12, tall - 6, '#3d5a2a', 0);   // stonek
+  }
   else if (k === 'stall') {   // kabinka: přepážky, mísa, barevné dveře (facing right = dveře vpravo)
     const right = o.facing === 'right', t = 3, dc = o.door || '#4a7fc0';
     if (right) { box(r.x, r.y, r.w, t, 4, 84, '#c9cfd4', 1); box(r.x, r.y + r.h - t, r.w, t, 4, 84, '#c9cfd4', 1); box(r.x, r.y, t, r.h, 4, 84, '#c9cfd4', 1); box(r.x + r.w - t, r.y + t, t, r.h - 2 * t, 4, 80, dc, 1); box(r.x + 4, r.y + r.h / 2 - 9, 24, 18, 0, 16, '#ffffff', 1); }
@@ -251,8 +336,24 @@ function hororModel(o, zb) {
   else if (k === 'wcwall') stack([[0, 84, '#c9cfd4']]);
   else if (k === 'sink') { box(r.x, r.y, r.w, r.h, 30, 36, '#f2f4f6', 0); box(r.x + r.w / 2 - 4, r.y + r.h / 2 - 4, 8, 8, 0, 30, '#dfe3e7', 0); }
   else if (k === 'trashbin') stack([[0, 24, '#5d6166']]);
-  else if (k === 'guitar') stack([[0, 40, '#a0522d']]);
-  else if (k === 'drums') stack([[0, 22, '#b03030']]);
+  else if (k === 'guitar') {   // kytara opřená na stojanu: tělo, ozvučný otvor, krk, hlava
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2, w = Math.min(r.w, r.h) * 0.9;
+    box(cx - w / 2, cy - 3, w, 6, 2, 22, '#a0522d', 1);
+    box(cx - w / 2 + 2, cy - 3.6, w - 4, 0.6, 12, 18, '#5a2d14', 0);
+    box(cx - 1.2, cy - 1.2, 2.4, 2.4, 22, 50, '#6d3a1d', 0);
+    box(cx - 2, cy - 2, 4, 4, 50, 56, '#3a2010', 0);
+    box(cx - w / 2, cy + 3, w, 2, 0, 2, '#222', 0);
+  } else if (k === 'drums') {   // bicí: velký buben, malý buben, tomy, činely na stojanech, stolička
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    box(cx - 9, cy - 6, 18, 12, 0, 18, '#b03030', 1); box(cx - 8, cy - 6.6, 16, 0.6, 2, 16, '#eeeeee', 0);   // velký buben, blána
+    box(cx - 16, cy + 2, 9, 9, 16, 22, '#c8c8cc', 1); box(cx - 16, cy + 2, 9, 9, 22, 22.6, '#f2f2f2', 0);       // malý buben
+    for (const dx of [-6, 3]) { box(cx + dx, cy - 3, 7, 7, 22, 28, '#b03030', 1); box(cx + dx, cy - 3, 7, 7, 28, 28.5, '#f2f2f2', 0); }   // tomy
+    box(cx + 10, cy + 2, 10, 10, 10, 17, '#b03030', 1);   // kotel
+    for (const [x, y, z] of [[r.x + 2, r.y + 2, 40], [r.x + r.w - 14, r.y + 2, 44], [r.x + 2, r.y + r.h - 14, 34]]) {
+      box(x + 5.5, y + 5.5, 1.2, 1.2, 0, z, '#9a9a9a', 0); box(x, y, 12, 12, z, z + 0.8, '#d4a937', 0);   // stojan a činel
+    }
+    box(cx - 4, r.y + r.h - 9, 8, 8, 0, 14, '#222', 0);   // stolička
+  }
   else if (k === 'keyboard') { table(r, 28, '#1b1b1b'); box(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 28, 29, '#f4f4f0', 0); }
   else if (k === 'ballcrate') stack([[0, 24, '#8a5a2e']]);
   else if (k === 'chembench') stack([[0, 4, '#3a3a3e'], [4, 32, '#e0e0dc'], [32, 35, '#2a2a2e']]);
@@ -371,7 +472,7 @@ function hororMapArt(M, scan) {
     for (let pass = 0; pass < 3; pass++) for (let c = 0; c < W * H; c++) {
       if (g[c] !== 2 || M.fh[c] !== 0) continue;
       const ci = c % W;
-      for (const [d, ok] of [[1, ci < W - 1], [-1, ci > 0], [W, true], [-W, true]]) if (ok && c + d >= 0 && c + d < W * H && M.fh[c + d] !== 0 && g[c + d] !== 1) { M.fh[c] = M.fh[c + d]; break; }
+      for (const [d, ok] of [[1, ci < W - 1], [-1, ci > 0], [W, true], [-W, true]]) if (ok && c + d >= 0 && c + d < W * H && M.fh[c + d] !== 0 && g[c + d] !== 1) { M.fh[c] = M.fh[c + d]; M.ch[c] = Math.max(M.ch[c], M.ch[c + d]); break; }
     }
   }
   M.flights = flights.filter((f) => !Number.isNaN(f.base)); M.flightsAll = flights;
@@ -492,7 +593,25 @@ function hororMap(roomId) {
   const boxes = [], zb = (x, y, smooth) => hororHeightAt(M, x, y, !smooth), freeAt = (x, y) => hororCell(M, x, y) === 0;
   room.obstacles.forEach((o) => {
     if (!allowed(o.rect.x + o.rect.w / 2, o.rect.y + o.rect.h / 2) || o.kind === 'void' || o.kind === 'plainwall') return;
-    const m = hororModel(o, zb);
+    const faceOf = () => {   // strana s nejvíc volnou podlahou před nábytkem
+      let best = 'bottom', bn = -1;
+      const cnt = {};
+      for (const sd of ['bottom', 'top', 'right', 'left']) {
+        let n = 0;
+        for (const a of [0.25, 0.5, 0.75]) {
+          const qx = sd === 'left' ? o.rect.x - 16 : sd === 'right' ? o.rect.x + o.rect.w + 16 : o.rect.x + o.rect.w * a;
+          const qy = sd === 'top' ? o.rect.y - 16 : sd === 'bottom' ? o.rect.y + o.rect.h + 16 : o.rect.y + o.rect.h * a;
+          if (freeAt(qx, qy)) n++;
+        }
+        cnt[sd] = n;
+        if (n > bn) { bn = n; best = sd; }
+      }
+      // zády ke zdi: když je jedna strana zablokovaná a protější volná, čelem je ta protější
+      const opp = { bottom: 'top', top: 'bottom', left: 'right', right: 'left' };
+      for (const sd of ['left', 'right', 'top', 'bottom']) if (cnt[sd] === 0 && cnt[opp[sd]] >= 2) return opp[sd];
+      return best;
+    };
+    const m = hororModel(o, zb, faceOf());
     boxes.push(...m.boxes);
     if (!m.drawer) return;
     const R = m.drawer.rect || o.rect, horiz = R.w >= R.h;
@@ -534,6 +653,19 @@ function hororMap(roomId) {
       M.drawers.push({ id, kind: o.kind, rect: o.rect, cx: r.x + r.w / 2, cy: r.y + r.h / 2, px: pr.x + pr.w / 2, py: pr.y + pr.h / 2, lo, hi });
     }
   });
+  // věci nakreslené jen v obrázku místnosti (ne jako nábytek): koše v tělocvičně
+  if (roomId === 'telocvicna') {
+    const t = CONFIG.WALL_THICKNESS, cy = room.y + room.h / 2, B = (x, y, w, h, z0, z1, c) => boxes.push({ x, y, w, h, z0, z1, c: hororRGB(c), s: 0 });
+    for (const [x, dir] of [[room.x + t, 1], [room.x + room.w - t, -1]]) {
+      const bx = dir > 0 ? x : x - 3;
+      B(bx, cy - 22, 3, 44, 78, 104, '#ffffff');                       // deska
+      B(bx + dir * 0.2, cy - 8, 3.2, 16, 82, 92, '#d32f2f');           // čtverec na desce
+      const rx = dir > 0 ? x + 3 : x - 21;
+      B(rx, cy - 9, 18, 2, 84, 85.5, '#ff6f00'); B(rx, cy + 7, 18, 2, 84, 85.5, '#ff6f00');   // obroučka
+      B(dir > 0 ? rx + 16 : rx, cy - 9, 2, 18, 84, 85.5, '#ff6f00');
+      for (let k = 0; k < 4; k++) B(rx + 2 + k * 4, cy - 7, 1, 14, 74, 84, '#eeeeee');      // síťka
+    }
+  }
   // které krabice jsou v které buňce (paprsek je hledá po buňkách)
   const lists = Array.from({ length: W * H }, () => null);
   boxes.forEach((b, bi) => {
@@ -1620,17 +1752,25 @@ function hororColumn(H, M, ray, x, cw, horizon, proj, E, Ht, ci) {
       if (t1 < t0 || t1 <= 0.5) continue;
       hits.push({ b, t0: Math.max(0.5, t0), t1, ax, bx, by });
     }
-    if (hits.length > 1) hits.sort((p, q) => p.t0 - q.t0);
+    if (hits.length > 1) hits.sort((p, q) => p.t0 - q.t0 || p.b.z0 - q.b.z0);
+    let cover = Infinity;   // zakrytí od plných krabic – použije se, až je nakreslený celý „sloupec“ nad sebou (skříňka na soklu…)
+    const flush = (t) => { if (cover < Infinity && !(t < Infinity && Math.abs(t - lastT) < 0.6)) { ybot = Math.min(ybot, cover); cover = Infinity; } };
+    let lastT = -1;
     for (const h of hits) {
+      flush(h.t0);
       const b = h.b, e0 = h.t0 * cos, e1 = h.t1 * cos, lb = light(e0) * (h.ax ? 0.72 : 1);
       const along = h.ax ? ox + dx * h.t0 - h.bx : oy + dy * h.t0 - h.by, len = h.ax ? b.w : b.h, edge = len > 4 && (along < 1.2 || len - along < 1.2);
       if (b.s) {
         fill(b.c, lb * (edge ? 0.62 : 1), Y(e0, b.z1), Y(e0, b.z0));
         if (b.z1 < E) fill(b.c, light(e0) * 1.12, Y(e1, b.z1), Y(e0, b.z1));
         fill(b.c, Math.min(1.6, lb * 1.3 + 0.05), Y(e0, b.z1), Y(e0, b.z1 - 1.2));   // osvětlená horní hrana
-        ybot = Math.min(ybot, b.z1 < E ? Y(e1, b.z1) : Y(e0, b.z1));
-      } else ovl.push({ b, e0, e1, lb, lt: light(e0), edge, ytop, ybot });
+        cover = Math.min(cover, b.z1 < E ? Y(e1, b.z1) : Y(e0, b.z1)); lastT = h.t0;
+      } else {   // průhledné (nohy, desky, opěradla): daleko jen větší kusy, a nejvýš 48 na sloupec (rychlost)
+        flush(Infinity);
+        if (ovl.length < 48 && (e0 < 320 || b.w > 3.5 && b.h > 3.5) && lb > 0.02) ovl.push({ b, e0, e1, lb, lt: light(e0), edge, ytop, ybot });
+      }
     }
+    flush(Infinity);
   };
   if (inMap) doBoxes(cell);
   let side = 0, t = 0;
